@@ -39,7 +39,7 @@ pipeline {
           checkout([$class: 'GitSCM',
             branches: [[name: '*/main']],
             userRemoteConfigs: [[
-              url: 'https://github.com/tieuclides2/CalcProjectTests.git'
+              url: 'https://github.com/tieuclides2/CalcTeste.git'
               // , credentialsId: 'SEU_CRED_ID' // se precisar
             ]]
           ])
@@ -101,3 +101,4 @@ pipeline {
     }
   }
 }
+
