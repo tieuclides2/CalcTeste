@@ -20,8 +20,8 @@ pipeline {
     OUT_DIR   = 'Win32\\Release'
     OUT_EXE   = 'Win32\\Release\\Project1.exe'
 
-    // Webhook via Jenkins Credentials (Secret text)
-    DISCORD_WEBHOOK = credentials('discord-webhook')
+    // Webhook via Jenkins Credentials (Secret text) retirar comentário quando todos rotinas estiverem ok
+    // DISCORD_WEBHOOK = credentials('discord-webhook')
   }
 
   stages {
@@ -126,3 +126,4 @@ Build URL: \$url
     }
   }
 }
+
