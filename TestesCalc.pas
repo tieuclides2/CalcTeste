@@ -44,7 +44,7 @@ procedure TMyTestObject.Somar;
 var
   Resultado: Integer;
 begin
-  Resultado := Calc.Somar(2, 2);
+  Resultado := Calc.Somar(2, 4);
   Assert.AreEqual(Resultado, 4, 'Function Somar retornou um erro');
 end;
 
@@ -58,5 +58,6 @@ initialization
 TDUnitX.RegisterTestFixture(TMyTestObject);
 
 end.
+
 
 
