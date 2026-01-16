@@ -18,7 +18,10 @@ pipeline {
 
     // Saída do runner
     OUT_DIR   = 'Win32\\Release'
-    OUT_EXE   = 'Win32\\Release\\Project1.exe'   // nome padrão do seu Project1
+    OUT_EXE   = 'Win32\\Release\\Project1.exe'
+
+    // Webhook via Jenkins Credentials (Secret text)
+    DISCORD_WEBHOOK = credentials('discord-webhook')
   }
 
   stages {
@@ -30,7 +33,6 @@ pipeline {
             branches: [[name: '*/main']],
             userRemoteConfigs: [[
               url: 'https://github.com/tieuclides2/CalcProject.git'
-              // , credentialsId: 'SEU_CRED_ID' // se precisar
             ]]
           ])
         }
@@ -40,7 +42,6 @@ pipeline {
             branches: [[name: '*/main']],
             userRemoteConfigs: [[
               url: 'https://github.com/tieuclides2/CalcTeste.git'
-              // , credentialsId: 'SEU_CRED_ID' // se precisar
             ]]
           ])
         }
@@ -99,6 +100,29 @@ pipeline {
       archiveArtifacts artifacts: '**\\Win32\\Release\\**\\*', fingerprint: true
       // sem cleanWs (mantém workspace)
     }
+
+    failure {
+      powershell """
+        \$ErrorActionPreference = 'Stop'
+
+        \$job    = \$env:JOB_NAME
+        \$num    = \$env:BUILD_NUMBER
+        \$url    = \$env:BUILD_URL
+        \$node   = \$env:NODE_NAME
+        \$branch = \$env:BRANCH_NAME
+        if ([string]::IsNullOrWhiteSpace(\$branch)) { \$branch = '(n/a)' }
+
+        \$msg = @"
+❌ Jenkins build FAILED
+Job: \$job #\$num
+Branch: \$branch
+Node: \$node
+Build URL: \$url
+"@
+
+        \$payload = @{ content = \$msg } | ConvertTo-Json -Compress
+        Invoke-RestMethod -Uri \$env:DISCORD_WEBHOOK -Method Post -ContentType 'application/json' -Body \$payload
+      """
+    }
   }
 }
-
