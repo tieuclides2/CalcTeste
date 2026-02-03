@@ -4,7 +4,6 @@ pipeline {
 
   environment {
     DELPHI_HOME = 'C:\\DelphiCompiler\\23.0'
-    // Nome do host do servidor (pra fallback UNC)
     SERVER_HOST = 'testes-pc'
   }
 
@@ -25,17 +24,24 @@ pipeline {
           echo === WHOAMI / CONTEXTO ===
           whoami
           echo.
+
           echo === Delphi Env ===
-          call "C:\\DelphiCompiler\\23.0\\bin\\rsvars.bat"
+          if not exist "%DELPHI_HOME%\\bin\\rsvars.bat" (
+            echo ERRO: rsvars.bat nao encontrado em %DELPHI_HOME%\\bin
+            exit /b 1
+          )
+          call "%DELPHI_HOME%\\bin\\rsvars.bat"
           where msbuild
           where dcc32
           echo.
+
           echo === Verificando se o Jenkins enxerga C:\\DelphiCompiler ===
           if exist "C:\\DelphiCompiler" (
             echo OK: C:\\DelphiCompiler existe
             dir "C:\\DelphiCompiler"
           ) else (
             echo ERRO: Jenkins NAO enxerga C:\\DelphiCompiler
+            exit /b 1
           )
         '''
       }
@@ -44,7 +50,6 @@ pipeline {
     stage('Resolver path do WebCharts') {
       steps {
         script {
-          // Vamos descobrir o path real que o Jenkins consegue acessar
           def out = bat(
             returnStdout: true,
             script: '''
@@ -87,6 +92,60 @@ pipeline {
       }
     }
 
+    stage('Resolver path do ACBr') {
+      steps {
+        script {
+          def out = bat(
+            returnStdout: true,
+            script: '''
+              @echo off
+              setlocal EnableExtensions EnableDelayedExpansion
+
+              set "A1=C:\\DelphiCompiler\\Componentes\\ACBr"
+              set "A2=\\\\testes-pc\\DelphiCompiler\\Componentes\\ACBr"
+
+              rem âncora: ACBrBase.pas fica tipicamente em Fontes\\ACBrComum
+              for %%P in ("%A1%" "%A2%") do (
+                if exist "%%~P\\Fontes\\ACBrComum\\ACBrBase.pas" (
+                  echo FOUND=%%~P
+                  exit /b 0
+                )
+              )
+
+              echo FOUND=
+              echo --- DEBUG LISTINGS ---
+              echo [1] dir C:\\DelphiCompiler\\Componentes
+              dir "C:\\DelphiCompiler\\Componentes" 2>nul
+              echo [2] dir C:\\DelphiCompiler\\Componentes\\ACBr
+              dir "C:\\DelphiCompiler\\Componentes\\ACBr" 2>nul
+              echo [3] dir C:\\DelphiCompiler\\Componentes\\ACBr\\Fontes
+              dir "C:\\DelphiCompiler\\Componentes\\ACBr\\Fontes" 2>nul
+              echo [4] dir \\\\testes-pc\\DelphiCompiler\\Componentes\\ACBr
+              dir "\\\\testes-pc\\DelphiCompiler\\Componentes\\ACBr" 2>nul
+              exit /b 1
+            '''
+          ).trim()
+
+          def foundLine = out.readLines().find { it.startsWith('FOUND=') }
+          def found = foundLine?.substring('FOUND='.length())?.trim()
+
+          if (!found) {
+            error("Nao foi possivel localizar ACBrBase.pas. Saida:\n${out}")
+          }
+
+          env.ACBR_DIR   = found
+          env.ACBR_FONTS = "${env.ACBR_DIR}\\Fontes"
+
+          // Para TACBrValidador (ACBrDiversos) + base
+          env.ACBR_PATH  = "${env.ACBR_FONTS}\\ACBrComum;${env.ACBR_FONTS}\\ACBrDiversos;${env.ACBR_FONTS}\\ACBrTCP"
+
+          echo "ACBR_DIR resolvido: ${env.ACBR_DIR}"
+          echo "ACBR_FONTS: ${env.ACBR_FONTS}"
+          echo "ACBR_PATH: ${env.ACBR_PATH}"
+        }
+      }
+    }
+
     stage('Build APP (CalcProject)') {
       steps {
         dir('CalcProject') {
@@ -96,12 +155,14 @@ pipeline {
 
             set "PLATFORM=Win32"
             set "CONFIG=Release"
+
             echo WEBCHARTS_DIR=%WEBCHARTS_DIR%
+            echo ACBR_PATH=%ACBR_PATH%
 
             msbuild Calc.dproj /t:Build ^
               /p:Config=%CONFIG% /p:Platform=%PLATFORM% ^
-              /p:DCC_UnitSearchPath="%WEBCHARTS_DIR%" ^
-              /p:DCC_IncludePath="%WEBCHARTS_DIR%" ^
+              /p:DCC_UnitSearchPath="%WEBCHARTS_DIR%;%ACBR_PATH%" ^
+              /p:DCC_IncludePath="%WEBCHARTS_DIR%;%ACBR_PATH%" ^
               /p:DCC_OutputDir="Win32\\%CONFIG%"
 
             if errorlevel 1 exit /b 1
@@ -122,12 +183,13 @@ pipeline {
             set "APP_SRC=%WORKSPACE%\\CalcProject"
 
             echo WEBCHARTS_DIR=%WEBCHARTS_DIR%
+            echo ACBR_PATH=%ACBR_PATH%
             echo APP_SRC=%APP_SRC%
 
             msbuild Project1.dproj /t:Build ^
               /p:Config=%CONFIG% /p:Platform=%PLATFORM% ^
-              /p:DCC_UnitSearchPath="%APP_SRC%;%WEBCHARTS_DIR%" ^
-              /p:DCC_IncludePath="%APP_SRC%;%WEBCHARTS_DIR%" ^
+              /p:DCC_UnitSearchPath="%APP_SRC%;%WEBCHARTS_DIR%;%ACBR_PATH%" ^
+              /p:DCC_IncludePath="%APP_SRC%;%WEBCHARTS_DIR%;%ACBR_PATH%" ^
               /p:DCC_OutputDir="Win32\\%CONFIG%"
 
             if errorlevel 1 exit /b 1
