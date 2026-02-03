@@ -132,34 +132,42 @@ pipeline {
     }
 
     stage('Build TESTS (CalcTeste)') {
-      steps {
-        dir('CalcTeste') {
-          bat """@echo off
-          call "%RSVARS%"
-          echo === MSBUILD Project1.dproj (TESTS) CFG=%CFG% PLAT=%PLAT% ===
+  steps {
+    dir('CalcTeste') {
+      bat """@echo off
+      call "%RSVARS%"
+      echo === MSBUILD Project1.dproj (TESTS) CFG=%CFG% PLAT=%PLAT% ===
 
-          if not exist "Project1.dproj" (
-            echo ERRO: Project1.dproj nao encontrado em %CD%
-            dir
-            exit /b 2
-          )
+      if not exist "Project1.dproj" (
+        echo ERRO: Project1.dproj nao encontrado em %CD%
+        dir
+        exit /b 2
+      )
 
-          set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcTeste\\%PLAT%\\%CFG%"
-          if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+      set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcTeste\\%PLAT%\\%CFG%"
+      if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
 
-          msbuild "Project1.dproj" /t:Build ^
-            /p:Config=%CFG% /p:Platform=%PLAT% ^
-            /p:DCC_UnitSearchPath="${env.UNIT_PATH}" ^
-            /p:DCC_IncludePath="${env.UNIT_PATH}" ^
-            /p:DCC_DcuOutput="%DCU_OUT%" ^
-            /p:DCC_OutputDir="Win32\\Release" ^
-            /fl /flp:logfile=msbuild_tests.log;verbosity=minimal
+      rem inclui o codigo do app no search path dos testes
+      set "APP_SRC=%WORKSPACE%\\CalcProject"
+      set "TEST_UNIT_PATH=%APP_SRC%;${env.UNIT_PATH}"
 
-          exit /b %ERRORLEVEL%
-          """
-        }
-      }
+      echo APP_SRC=%APP_SRC%
+      echo TEST_UNIT_PATH=%TEST_UNIT_PATH%
+
+      msbuild "Project1.dproj" /t:Build ^
+        /p:Config=%CFG% /p:Platform=%PLAT% ^
+        /p:DCC_UnitSearchPath="%TEST_UNIT_PATH%" ^
+        /p:DCC_IncludePath="%TEST_UNIT_PATH%" ^
+        /p:DCC_DcuOutput="%DCU_OUT%" ^
+        /p:DCC_OutputDir="Win32\\Release" ^
+        /fl /flp:logfile=msbuild_tests.log;verbosity=minimal
+
+      exit /b %ERRORLEVEL%
+      """
     }
+  }
+}
+
 
     stage('Run unit tests (DUnitX)') {
       steps {
@@ -191,3 +199,4 @@ pipeline {
     }
   }
 }
+
