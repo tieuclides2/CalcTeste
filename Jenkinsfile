@@ -1,16 +1,3 @@
-@NonCPS
-String extractMissingUnit(String logText) {
-  if (logText == null) return null
-
-  def p = java.util.regex.Pattern.compile(
-    "error\\s+F2613:\\s+Unit\\s+'([^']+)'\\s+not\\s+found",
-    java.util.regex.Pattern.CASE_INSENSITIVE
-  )
-  def m = p.matcher(logText)
-  if (m.find()) return m.group(1)
-  return null
-}
-
 pipeline {
   agent { label 'delphi-qa' }
 
@@ -21,7 +8,7 @@ pipeline {
     // Vendors base
     COMP_BASE = 'C:\\DelphiCompiler\\Componentes'
 
-    // Cache global (não precisa pré-criar; o pipeline cria)
+    // Cache global
     JENKINS_CACHE = 'C:\\Jenkins\\delphi-qa\\JenkinsCache'
 
     // defaults
@@ -78,105 +65,103 @@ pipeline {
     }
 
     stage('Resolver roots (vendors + FastReport)') {
-  steps {
-    script {
-      def webcharts = "${env.COMP_BASE}\\TBGWebCharts"
-      def acbr      = "${env.COMP_BASE}\\ACBr"
-      def bceditor  = "${env.COMP_BASE}\\BCEditor"
-      def redsis    = "${env.COMP_BASE}\\RedsisComponents"
-
-      def acbrPath = [
-        "${acbr}\\Fontes\\ACBrComum",
-        "${acbr}\\Fontes\\ACBrDiversos",
-        "${acbr}\\Fontes\\ACBrTCP",
-        "${acbr}\\Fontes\\Terceiros\\synalist",
-        "${acbr}\\Fontes\\Terceiros\\FastStringReplace",
-        "${acbr}\\Fontes\\Terceiros\\GZIPUtils",
-        "${acbr}\\Fontes\\Terceiros"
-      ].join(';')
-
-      // FastReport base
-      def frBase    = "${env.COMP_BASE}\\Fast Reports\\VCL\\2025.2.2"
-      def frSources = "${frBase}\\Sources"
-
-      // DCUs do FastReport (Win32). Alguns pacotes usam Win32, outros Win32x.
-      def frDcuCandidates = [
-        "${frBase}\\LibRS29\\VCL\\Win32",
-        "${frBase}\\LibRS29\\VCL\\Win32x",
-        "${frBase}\\Sources\\LibRS29\\VCL\\Win32",
-        "${frBase}\\Sources\\LibRS29\\VCL\\Win32x"
-      ]
-
-      // mantém só os diretórios que existem
-      def frDcus = frDcuCandidates.findAll { p -> fileExists(p) }
-
-      echo "FastReport DCU dirs detectados: ${frDcus}"
-
-      // Prioridade: DCU primeiro, depois Sources
-      env.UNIT_PATH = ([
-        webcharts,
-        acbrPath
-      ] + frDcus + [
-        frSources
-      ]).join(';')
-
-      env.VENDOR_ROOTS = [
-        webcharts,
-        acbr, "${acbr}\\Fontes", "${acbr}\\Fontes\\Terceiros",
-        bceditor,
-        redsis,
-        frBase,
-        frSources
-      ].join(';')
-
-      echo "UNIT_PATH: ${env.UNIT_PATH}"
-      echo "VENDOR_ROOTS: ${env.VENDOR_ROOTS}"
-    }
-  }
-}
-
-
-    stage('Build APP (CalcProject)') {
       steps {
-        dir('CalcProject') {
-          script {
-            // log file do msbuild
-            def mslog = "msbuild_calc_try1.log"
+        script {
+          def webcharts = "${env.COMP_BASE}\\TBGWebCharts"
+          def acbr      = "${env.COMP_BASE}\\ACBr"
+          def bceditor  = "${env.COMP_BASE}\\BCEditor"
+          def redsis    = "${env.COMP_BASE}\\RedsisComponents"
 
-            // build
-            bat """@echo off
-            call "%RSVARS%"
-            echo === MSBUILD Calc.dproj CFG=%CFG% PLAT=%PLAT% ===
+          def acbrPath = [
+            "${acbr}\\Fontes\\ACBrComum",
+            "${acbr}\\Fontes\\ACBrDiversos",
+            "${acbr}\\Fontes\\ACBrTCP",
+            "${acbr}\\Fontes\\Terceiros\\synalist",
+            "${acbr}\\Fontes\\Terceiros\\FastStringReplace",
+            "${acbr}\\Fontes\\Terceiros\\GZIPUtils",
+            "${acbr}\\Fontes\\Terceiros"
+          ].join(';')
 
-            set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcProject\\%PLAT%\\%CFG%"
-            if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+          def frBase    = "${env.COMP_BASE}\\Fast Reports\\VCL\\2025.2.2"
+          def frSources = "${frBase}\\Sources"
 
-            msbuild "Calc.dproj" /t:Build ^
-              /p:Config=%CFG% /p:Platform=%PLAT% ^
-              /p:DCC_UnitSearchPath="${env.UNIT_PATH}" ^
-              /p:DCC_IncludePath="${env.UNIT_PATH}" ^
-              /p:DCC_DcuOutput="%DCU_OUT%" ^
-              /p:DCC_OutputDir="Win32\\\\Release" ^
-              /fl /flp:logfile=${mslog};verbosity=minimal
+          def frDcuCandidates = [
+            "${frBase}\\LibRS29\\VCL\\Win32",
+            "${frBase}\\LibRS29\\VCL\\Win32x",
+            "${frBase}\\Sources\\LibRS29\\VCL\\Win32",
+            "${frBase}\\Sources\\LibRS29\\VCL\\Win32x"
+          ]
 
-            exit /b %ERRORLEVEL%
-            """
+          def frDcus = frDcuCandidates.findAll { p -> fileExists(p) }
+          echo "FastReport DCU dirs detectados: ${frDcus}"
 
-            // se falhar, tenta extrair a unit faltando (sem sandbox-bans)
-            def txt = readFile(mslog)
-            def missing = extractMissingUnit(txt)
-            if (missing != null) {
-              echo "Unit faltando detectada: ${missing}"
-              error("Falha na compilação: unit '${missing}' não encontrada. Ajuste UNIT_PATH/VENDOR_ROOTS para incluir a pasta onde está ${missing}.pas")
-            }
-          }
+          env.UNIT_PATH = ([
+            webcharts,
+            acbrPath
+          ] + frDcus + [
+            frSources
+          ]).join(';')
+
+          echo "UNIT_PATH: ${env.UNIT_PATH}"
         }
       }
     }
 
-    // Se você quiser reativar testes depois, a gente ajusta quando você confirmar qual .dproj de testes.
-    
+    stage('Build APP (CalcProject)') {
+      steps {
+        dir('CalcProject') {
+          bat """@echo off
+          call "%RSVARS%"
+          echo === MSBUILD Calc.dproj CFG=%CFG% PLAT=%PLAT% ===
+
+          set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcProject\\%PLAT%\\%CFG%"
+          if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+
+          msbuild "Calc.dproj" /t:Build ^
+            /p:Config=%CFG% /p:Platform=%PLAT% ^
+            /p:DCC_UnitSearchPath="${env.UNIT_PATH}" ^
+            /p:DCC_IncludePath="${env.UNIT_PATH}" ^
+            /p:DCC_DcuOutput="%DCU_OUT%" ^
+            /p:DCC_OutputDir="Win32\\Release" ^
+            /fl /flp:logfile=msbuild_calc.log;verbosity=minimal
+
+          exit /b %ERRORLEVEL%
+          """
+        }
+      }
+    }
+
     stage('Build TESTS (CalcTeste)') {
+      steps {
+        dir('CalcTeste') {
+          bat """@echo off
+          call "%RSVARS%"
+          echo === MSBUILD Project1.dproj (TESTS) CFG=%CFG% PLAT=%PLAT% ===
+
+          if not exist "Project1.dproj" (
+            echo ERRO: Project1.dproj nao encontrado em %CD%
+            dir
+            exit /b 2
+          )
+
+          set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcTeste\\%PLAT%\\%CFG%"
+          if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+
+          msbuild "Project1.dproj" /t:Build ^
+            /p:Config=%CFG% /p:Platform=%PLAT% ^
+            /p:DCC_UnitSearchPath="${env.UNIT_PATH}" ^
+            /p:DCC_IncludePath="${env.UNIT_PATH}" ^
+            /p:DCC_DcuOutput="%DCU_OUT%" ^
+            /p:DCC_OutputDir="Win32\\Release" ^
+            /fl /flp:logfile=msbuild_tests.log;verbosity=minimal
+
+          exit /b %ERRORLEVEL%
+          """
+        }
+      }
+    }
+
+    stage('Run unit tests (DUnitX)') {
       steps {
         dir('CalcTeste') {
           bat """@echo off
@@ -194,11 +179,15 @@ pipeline {
           echo Test runner exit code: %ERR%
 
           exit /b %ERR%
-          '''
+          """
         }
       }
     }
-  
+  }
+
+  post {
+    always {
+      archiveArtifacts artifacts: '**/*.log, **/Win32/Release/*.exe', allowEmptyArchive: true
+    }
   }
 }
-
