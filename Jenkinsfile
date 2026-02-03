@@ -3,7 +3,7 @@
 @NonCPS
 String extractMissingUnit(String logText) {
   if (logText == null) return null
-  def m = (logText =~ /error\s+F2613:\s+Unit\s+'([^']+)'\s+not\s+found/i)
+  def m = (logText =~ /(?i)error\s+F2613:\s+Unit\s+'([^']+)'\s+not\s+found/)
   return (m && m.size() > 0) ? m[0][1] : null
 }
 
@@ -85,18 +85,15 @@ pipeline {
     stage('Resolver roots (vendors + FastReport)') {
       steps {
         script {
-          // Vendors existentes no seu servidor
           def webChartsDir = "${env.COMPONENTES}\\TBGWebCharts"
           def acbrDir      = "${env.COMPONENTES}\\ACBr"
           def bceditorDir  = "${env.COMPONENTES}\\BCEditor"
           def redsisDir    = "${env.COMPONENTES}\\RedsisComponents"
 
-          // FastReport (pela sua estrutura no print)
-          def frBase   = "${env.COMPONENTES}\\Fast Reports\\VCL\\2025.2.2"
-          def frSrc    = "${frBase}\\Sources"
-          def frLib    = "${frBase}\\LibRS29"
+          def frBase = "${env.COMPONENTES}\\Fast Reports\\VCL\\2025.2.2"
+          def frSrc  = "${frBase}\\Sources"
+          def frLib  = "${frBase}\\LibRS29"
 
-          // ACBr subpaths (o que você já vinha usando)
           def acbrPath = [
             "${acbrDir}\\Fontes\\ACBrComum",
             "${acbrDir}\\Fontes\\ACBrDiversos",
@@ -107,22 +104,10 @@ pipeline {
             "${acbrDir}\\Fontes\\Terceiros"
           ].join(';')
 
-          // FastReport path: fonte + libs (DCU)
-          // (mesmo que frLib não tenha DCU, deixar no path não atrapalha)
-          def frPath = [
-            frSrc,
-            frLib
-          ].join(';')
+          def frPath = [ frSrc, frLib ].join(';')
 
-          // Path inicial do compilador (vendor paths “known good”)
-          // (ordem importa: preferir DCU/lib antes de sources, se houver)
-          env.UNIT_PATH = [
-            webChartsDir,
-            acbrPath,
-            frPath
-          ].join(';')
+          env.UNIT_PATH = [ webChartsDir, acbrPath, frPath ].join(';')
 
-          // Roots para auto-inject (procura UnitName.pas dentro desses lugares)
           env.VENDOR_ROOTS = [
             webChartsDir,
             acbrDir,
@@ -135,10 +120,6 @@ pipeline {
             frLib
           ].join(';')
 
-          echo "WEBCHARTS_DIR: ${webChartsDir}"
-          echo "ACBR_DIR: ${acbrDir}"
-          echo "BCEDITOR_DIR: ${bceditorDir}"
-          echo "REDSIS_DIR: ${redsisDir}"
           echo "FASTREPORT_BASE: ${frBase}"
           echo "FASTREPORT_SOURCES: ${frSrc}"
           echo "FASTREPORT_LIB: ${frLib}"
@@ -165,8 +146,6 @@ pipeline {
                 call ${q(env.RSVARS)}
                 echo === MSBUILD Calc.dproj CFG=${env.CFG} PLAT=${env.PLAT} ===
 
-                rem Opcional: separar DCU do projeto (se seu MSBuild/Delphi respeitar)
-                rem Se não respeitar, apenas ignore: não quebra o build.
                 set DCU_OUT=${q(env.DCU_CACHE)}\\CalcProject\\${env.PLAT}\\${env.CFG}
                 if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
 
@@ -195,7 +174,6 @@ pipeline {
 
               echo "Unit faltando: ${missing}"
 
-              // procura UnitName.pas nos roots e injeta a pasta encontrada no UNIT_PATH
               def foundDir = bat(returnStdout: true, script: """
                 @echo off
                 setlocal enabledelayedexpansion
@@ -214,15 +192,14 @@ pipeline {
               """).trim()
 
               if (!foundDir) {
-                error "Não encontrei ${missing}.pas em VENDOR_ROOTS. Adicione o root do vendor no Jenkinsfile."
+                error "Não encontrei ${missing}.pas em VENDOR_ROOTS."
               }
 
-              // injeta apenas a pasta (sem repetir)
               if (!env.UNIT_PATH.toLowerCase().contains(foundDir.toLowerCase())) {
                 env.UNIT_PATH = "${env.UNIT_PATH};${foundDir}"
                 echo "Injetado no UnitSearchPath: ${foundDir}"
               } else {
-                error "Encontrei ${missing}.pas, mas a pasta já estava no UnitSearchPath e mesmo assim falhou. Verifique conflito de versões/DCU."
+                error "Encontrei ${missing}.pas, mas a pasta já estava no UnitSearchPath e mesmo assim falhou."
               }
 
               if (i == maxTries) {
@@ -238,11 +215,9 @@ pipeline {
       steps {
         dir('CalcTeste') {
           script {
-            // Ajuste aqui para o NOME REAL do .dproj de testes
-            def testDproj = 'CalcTeste.dproj'
+            def testDproj = 'CalcTeste.dproj' // AJUSTE se o nome for outro
 
-            def exists = fileExists(testDproj)
-            if (!exists) {
+            if (!fileExists(testDproj)) {
               error "Não achei ${testDproj} em CalcTeste. Ajuste o nome do projeto de testes no Jenkinsfile."
             }
 
@@ -325,14 +300,11 @@ pipeline {
     stage('Run unit tests (DUnitX)') {
       steps {
         dir('CalcTeste') {
-          // Ajuste o nome do exe de testes gerado pelo seu projeto
-          // Ex.: Win32\Release\CalcTeste.exe ou algo como Tests.exe
           bat """
             @echo on
             set TEST_EXE=Win32\\Release\\CalcTeste.exe
             if not exist "%TEST_EXE%" (
               echo ERRO: nao achei o executavel de testes: %TEST_EXE%
-              echo Ajuste o caminho/nome no Jenkinsfile.
               exit /b 1
             )
             "%TEST_EXE%" --run
