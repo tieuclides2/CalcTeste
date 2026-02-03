@@ -3,11 +3,10 @@ pipeline {
   options { timestamps() }
 
   environment {
-    DELPHI_HOME   = 'C:\\DelphiCompiler\\23.0'
-    COMPONENTS    = 'C:\\DelphiCompiler\\Componentes'
-    SERVER_HOST   = 'testes-pc'
+    DELPHI_HOME    = 'C:\\DelphiCompiler\\23.0'
+    COMPONENTS     = 'C:\\DelphiCompiler\\Componentes'
 
-    // EVITA colisão com variáveis do Windows/serviço
+    // Evita colisão com variável PLATFORM do serviço/sistema
     BUILD_PLATFORM = 'Win32'
     BUILD_CONFIG   = 'Release'
   }
@@ -61,9 +60,8 @@ pipeline {
 
               set "C1=%COMPONENTS%\\TBGWebCharts"
               set "C2=%COMPONENTS%\\TBGWebCharts\\TBGWebCharts"
-              set "C3=\\\\testes-pc\\DelphiCompiler\\Componentes\\TBGWebCharts"
 
-              for %%P in ("%C1%" "%C2%" "%C3%") do (
+              for %%P in ("%C1%" "%C2%") do (
                 if exist "%%~P\\View.WebCharts.pas" (
                   echo FOUND=%%~P
                   exit /b 0
@@ -77,10 +75,7 @@ pipeline {
 
           def foundLine = out.readLines().find { it.startsWith('FOUND=') }
           def found = foundLine?.substring('FOUND='.length())?.trim()
-
-          if (!found) {
-            error("Nao foi possivel localizar View.WebCharts.pas. Saida:\n${out}")
-          }
+          if (!found) error("Nao foi possivel localizar View.WebCharts.pas.\n${out}")
 
           env.WEBCHARTS_DIR = found
           echo "WEBCHARTS_DIR resolvido: ${env.WEBCHARTS_DIR}"
@@ -127,7 +122,7 @@ pipeline {
       steps {
         dir('CalcProject') {
           script {
-            buildWithAutoInject('Calc.dproj', "${env.WEBCHARTS_DIR};${env.ACBR_PATH}")
+            buildWithAutoInject('Calc.dproj', "${env.WEBCHARTS_DIR};${env.ACBR_PATH}", env.VENDOR_ROOTS)
           }
         }
       }
@@ -138,7 +133,7 @@ pipeline {
         dir('CalcTeste') {
           script {
             def appSrc = "${env.WORKSPACE}\\CalcProject"
-            buildWithAutoInject('Project1.dproj', "${appSrc};${env.WEBCHARTS_DIR};${env.ACBR_PATH}")
+            buildWithAutoInject('Project1.dproj', "${appSrc};${env.WEBCHARTS_DIR};${env.ACBR_PATH}", env.VENDOR_ROOTS)
           }
         }
       }
@@ -178,44 +173,59 @@ pipeline {
   }
 }
 
-def buildWithAutoInject(String dproj, String extraUnitBase) {
-  int maxTries = 8
+/**
+ * Roda o msbuild em loop.
+ * Se falhar com F2613 Unit 'X' not found, procura X.pas em vendorRoots e injeta o dir automaticamente.
+ */
+def buildWithAutoInject(String dproj, String baseUnitPath, String vendorRoots) {
+  int maxTries = 12
   def injected = [] as Set
 
   for (int i = 1; i <= maxTries; i++) {
     def injectedPath = injected ? (';' + injected.join(';')) : ''
-    def unitPath = "${extraUnitBase}${injectedPath}"
+    def unitPath = "${baseUnitPath}${injectedPath}"
 
     echo "=== Build tentativa ${i}/${maxTries} ==="
     echo "UnitSearchPath atual: ${unitPath}"
 
+    // Importante: NÃO pode falhar o step bat, senão não conseguimos parsear e iterar.
     def out = bat(returnStdout: true, script: """
-      @echo on
+      @echo off
+      setlocal EnableExtensions EnableDelayedExpansion
+
       call "%DELPHI_HOME%\\bin\\rsvars.bat"
 
-      rem GARANTE platform/config (evita %PLATFORM% vazio/colisão)
       set "CFG=%BUILD_CONFIG%"
       set "PLAT=%BUILD_PLATFORM%"
 
+      set "LOG=msbuild_${i}.log"
+
       msbuild "${dproj}" /t:Build ^
-        /p:Config=%CFG% /p:Platform=%PLAT% ^
+        /p:Config=!CFG! /p:Platform=!PLAT! ^
         /p:DCC_UnitSearchPath="${unitPath}" ^
         /p:DCC_IncludePath="${unitPath}" ^
-        /p:DCC_OutputDir="Win32\\\\%CFG%"
+        /p:DCC_OutputDir="Win32\\\\!CFG!" > "!LOG!" 2>&1
 
-      exit /b %ERRORLEVEL%
+      set "RC=!ERRORLEVEL!"
+
+      type "!LOG!"
+      echo __RC__=!RC!
+
+      exit /b 0
     """).trim()
 
-    if (!out.contains("error F2613: Unit")) {
-      if (out.contains("FALHA")) {
-        error("Build falhou por erro que não é Unit not found.\n\n${out}")
-      }
+    def rcLine = out.readLines().reverse().find { it.startsWith('__RC__=') }
+    def rc = rcLine ? (rcLine.substring('__RC__='.length()) as int) : 999
+
+    if (rc == 0) {
+      echo "Build OK."
       return
     }
 
+    // Tenta extrair unit faltando
     def m = (out =~ /error F2613: Unit '([^']+)' not found\./)
     if (!m.find()) {
-      error("Falhou com Unit not found, mas não consegui extrair o nome.\n\n${out}")
+      error("Build falhou (RC=${rc}) mas não é F2613 (Unit not found).\n\n${out}")
     }
 
     def unitName = m.group(1)
@@ -226,7 +236,7 @@ def buildWithAutoInject(String dproj, String extraUnitBase) {
       setlocal EnableExtensions EnableDelayedExpansion
 
       set "TARGET=${unitName}.pas"
-      set "ROOTS=${env.VENDOR_ROOTS}"
+      set "ROOTS=${vendorRoots}"
 
       for %%R in (!ROOTS:;= !) do (
         if exist "%%~R" (
@@ -236,23 +246,25 @@ def buildWithAutoInject(String dproj, String extraUnitBase) {
           )
         )
       )
+
       exit /b 1
     """).trim()
 
     if (!foundDir) {
       error(
         "Nao achei ${unitName}.pas dentro de VENDOR_ROOTS.\n" +
-        "Pode ser dependencia por DCU/DCP/BPL ou unit fora da arvore.\n\n" +
-        "Saida do build:\n${out}"
+        "Se essa dependencia vier só como DCU/DCP, precisa adicionar a pasta de DCU no search path.\n\n" +
+        "Log do build:\n${out}"
       )
     }
 
     foundDir = foundDir.replaceAll(/[\\\\\\s]+$/, '')
+
     if (!injected.contains(foundDir)) {
       injected.add(foundDir)
       echo "Injetando no path: ${foundDir}"
     } else {
-      error("Já injetei ${foundDir} e o erro persiste. Saida:\n\n${out}")
+      error("Já injetei ${foundDir} e o erro persiste. Log:\n\n${out}")
     }
   }
 
