@@ -3,11 +3,13 @@ pipeline {
   options { timestamps() }
 
   environment {
-    DELPHI_HOME = 'C:\\DelphiCompiler\\23.0'
-    COMPONENTS  = 'C:\\DelphiCompiler\\Componentes'
-    SERVER_HOST = 'testes-pc'
-    PLATFORM    = 'Win32'
-    CONFIG      = 'Release'
+    DELPHI_HOME   = 'C:\\DelphiCompiler\\23.0'
+    COMPONENTS    = 'C:\\DelphiCompiler\\Componentes'
+    SERVER_HOST   = 'testes-pc'
+
+    // EVITA colisão com variáveis do Windows/serviço
+    BUILD_PLATFORM = 'Win32'
+    BUILD_CONFIG   = 'Release'
   }
 
   stages {
@@ -89,20 +91,15 @@ pipeline {
     stage('Resolver roots (ACBr / BCEditor / Redsis)') {
       steps {
         script {
-          // Roots fixos (padrão robusto)
           env.ACBR_DIR   = "${env.COMPONENTS}\\ACBr"
           env.BCED_DIR   = "${env.COMPONENTS}\\BCEditor"
           env.REDSIS_DIR = "${env.COMPONENTS}\\RedsisComponents"
 
-          // ACBr: fontes principais (você já viu que precisa ACBrComum / Diversos / TCP)
           def acbrFonts = "${env.ACBR_DIR}\\Fontes"
+          def synalist  = "${acbrFonts}\\Terceiros\\synalist"
+          def fastStr   = "${acbrFonts}\\Terceiros\\FastStringReplace"
 
-          // Terceiros que já apareceram no seu build:
-          def synalist = "${acbrFonts}\\Terceiros\\synalist"            // synautil.pas
-          def fastStr  = "${acbrFonts}\\Terceiros\\FastStringReplace"   // StrUtilsEx.pas
-
-          // Pastas “base” do ACBr (você pode ampliar depois, mas essas são as que já bateram)
-          def acbrPath = [
+          env.ACBR_PATH = [
             "${acbrFonts}\\ACBrComum",
             "${acbrFonts}\\ACBrDiversos",
             "${acbrFonts}\\ACBrTCP",
@@ -110,9 +107,6 @@ pipeline {
             fastStr
           ].join(';')
 
-          env.ACBR_PATH = acbrPath
-
-          // Roots gerais para o “auto-inject”
           env.VENDOR_ROOTS = [
             env.WEBCHARTS_DIR,
             env.ACBR_DIR,
@@ -133,7 +127,7 @@ pipeline {
       steps {
         dir('CalcProject') {
           script {
-            buildWithAutoInject('Calc.dproj', /*extraUnitBase*/ "${env.WEBCHARTS_DIR};${env.ACBR_PATH}")
+            buildWithAutoInject('Calc.dproj', "${env.WEBCHARTS_DIR};${env.ACBR_PATH}")
           }
         }
       }
@@ -144,7 +138,7 @@ pipeline {
         dir('CalcTeste') {
           script {
             def appSrc = "${env.WORKSPACE}\\CalcProject"
-            buildWithAutoInject('Project1.dproj', /*extraUnitBase*/ "${appSrc};${env.WEBCHARTS_DIR};${env.ACBR_PATH}")
+            buildWithAutoInject('Project1.dproj', "${appSrc};${env.WEBCHARTS_DIR};${env.ACBR_PATH}")
           }
         }
       }
@@ -155,11 +149,11 @@ pipeline {
         dir('CalcTeste') {
           bat '''
             @echo on
-            set "TEST_EXE=%WORKSPACE%\\CalcTeste\\Win32\\%CONFIG%\\Project1.exe"
+            set "TEST_EXE=%WORKSPACE%\\CalcTeste\\Win32\\%BUILD_CONFIG%\\Project1.exe"
 
             if not exist "%TEST_EXE%" (
               echo Test EXE nao encontrado: %TEST_EXE%
-              dir "%WORKSPACE%\\CalcTeste\\Win32\\%CONFIG%"
+              dir "%WORKSPACE%\\CalcTeste\\Win32\\%BUILD_CONFIG%"
               exit /b 1
             )
 
@@ -184,16 +178,11 @@ pipeline {
   }
 }
 
-/**
- * Compila com MSBuild e, se der "Unit 'X' not found", tenta localizar X.pas
- * dentro de VENDOR_ROOTS e injeta a pasta encontrada no DCC_UnitSearchPath.
- */
 def buildWithAutoInject(String dproj, String extraUnitBase) {
   int maxTries = 8
   def injected = [] as Set
 
   for (int i = 1; i <= maxTries; i++) {
-    // monta UnitSearchPath atual
     def injectedPath = injected ? (';' + injected.join(';')) : ''
     def unitPath = "${extraUnitBase}${injectedPath}"
 
@@ -204,28 +193,26 @@ def buildWithAutoInject(String dproj, String extraUnitBase) {
       @echo on
       call "%DELPHI_HOME%\\bin\\rsvars.bat"
 
+      rem GARANTE platform/config (evita %PLATFORM% vazio/colisão)
+      set "CFG=%BUILD_CONFIG%"
+      set "PLAT=%BUILD_PLATFORM%"
+
       msbuild "${dproj}" /t:Build ^
-        /p:Config=%CONFIG% /p:Platform=%PLATFORM% ^
+        /p:Config=%CFG% /p:Platform=%PLAT% ^
         /p:DCC_UnitSearchPath="${unitPath}" ^
         /p:DCC_IncludePath="${unitPath}" ^
-        /p:DCC_OutputDir="Win32\\\\%CONFIG%"
+        /p:DCC_OutputDir="Win32\\\\%CFG%"
 
       exit /b %ERRORLEVEL%
     """).trim()
 
-    // sucesso
-    if (!out.contains('error F2613: Unit')) {
-      // se retornou erro diferente de Unit not found, falha
-      if (out.toLowerCase().contains('error')) {
-        // pode ter warnings; checa o exit code pelo erro "FALHA"
-        if (out.contains('FALHA')) {
-          error("Build falhou por erro que não é Unit not found.\n\n${out}")
-        }
+    if (!out.contains("error F2613: Unit")) {
+      if (out.contains("FALHA")) {
+        error("Build falhou por erro que não é Unit not found.\n\n${out}")
       }
       return
     }
 
-    // extrai Unit faltando (primeira ocorrência)
     def m = (out =~ /error F2613: Unit '([^']+)' not found\./)
     if (!m.find()) {
       error("Falhou com Unit not found, mas não consegui extrair o nome.\n\n${out}")
@@ -234,7 +221,6 @@ def buildWithAutoInject(String dproj, String extraUnitBase) {
     def unitName = m.group(1)
     echo "Unit faltando: ${unitName}"
 
-    // procura UnitName.pas nos roots
     def foundDir = bat(returnStdout: true, script: """
       @echo off
       setlocal EnableExtensions EnableDelayedExpansion
@@ -256,12 +242,11 @@ def buildWithAutoInject(String dproj, String extraUnitBase) {
     if (!foundDir) {
       error(
         "Nao achei ${unitName}.pas dentro de VENDOR_ROOTS.\n" +
-        "Isso normalmente indica dependencia por DCU/DCP/BPL ou unit fora da arvore.\n\n" +
+        "Pode ser dependencia por DCU/DCP/BPL ou unit fora da arvore.\n\n" +
         "Saida do build:\n${out}"
       )
     }
 
-    // normaliza: remove barra final
     foundDir = foundDir.replaceAll(/[\\\\\\s]+$/, '')
     if (!injected.contains(foundDir)) {
       injected.add(foundDir)
