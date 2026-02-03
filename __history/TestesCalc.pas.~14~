@@ -1,0 +1,59 @@
+unit TestesCalc;
+
+interface
+
+uses
+  DUnitX.TestFramework, FormPrincipalCalc;
+
+type
+
+  [TestFixture]
+  TMyTestObject = class
+  public
+  private
+    Calc: TForm1;
+    [Setup]
+    procedure Setup;
+    [TearDown]
+    procedure TearDown;
+    [Test]
+    procedure Somar;
+    [Test]
+    procedure FormatarCPFCNPJ;
+  end;
+
+implementation
+uses
+  System.SysUtils;
+
+procedure TMyTestObject.FormatarCPFCNPJ;
+var
+  Resultado : string;
+begin
+  Resultado := Calc.FormatarCPFCNPJ('123.123.123-00');
+  showmessage
+end;
+
+procedure TMyTestObject.Setup;
+begin
+  Calc := TForm1.Create(nil);
+end;
+
+procedure TMyTestObject.Somar;
+var
+  Resultado: Integer;
+begin
+  Resultado := Calc.Somar(2, 2);
+  Assert.AreEqual(Resultado, 4, 'Function Somar retornou um erro');
+end;
+
+procedure TMyTestObject.TearDown;
+begin
+  Calc.Free;
+end;
+
+initialization
+
+TDUnitX.RegisterTestFixture(TMyTestObject);
+
+end.
