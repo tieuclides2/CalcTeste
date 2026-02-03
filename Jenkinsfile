@@ -24,17 +24,15 @@ pipeline {
           echo === WHOAMI / CONTEXTO ===
           whoami
           echo.
-
           echo === Delphi Env ===
-          if not exist "%DELPHI_HOME%\\bin\\rsvars.bat" (
-            echo ERRO: rsvars.bat nao encontrado em %DELPHI_HOME%\\bin
+          if not exist "C:\\DelphiCompiler\\23.0\\bin\\rsvars.bat" (
+            echo ERRO: rsvars.bat nao encontrado em C:\\DelphiCompiler\\23.0\\bin
             exit /b 1
           )
-          call "%DELPHI_HOME%\\bin\\rsvars.bat"
+          call "C:\\DelphiCompiler\\23.0\\bin\\rsvars.bat"
           where msbuild
           where dcc32
           echo.
-
           echo === Verificando se o Jenkins enxerga C:\\DelphiCompiler ===
           if exist "C:\\DelphiCompiler" (
             echo OK: C:\\DelphiCompiler existe
@@ -92,7 +90,7 @@ pipeline {
       }
     }
 
-    stage('Resolver path do ACBr') {
+    stage('Resolver path do ACBr + Synapse (synalist)') {
       steps {
         script {
           def out = bat(
@@ -104,43 +102,62 @@ pipeline {
               set "A1=C:\\DelphiCompiler\\Componentes\\ACBr"
               set "A2=\\\\testes-pc\\DelphiCompiler\\Componentes\\ACBr"
 
-              rem âncora: ACBrBase.pas fica tipicamente em Fontes\\ACBrComum
+              set "FOUND_ACBR="
               for %%P in ("%A1%" "%A2%") do (
                 if exist "%%~P\\Fontes\\ACBrComum\\ACBrBase.pas" (
-                  echo FOUND=%%~P
-                  exit /b 0
+                  set "FOUND_ACBR=%%~P"
+                  goto :acbr_ok
                 )
               )
+              :acbr_ok
 
-              echo FOUND=
-              echo --- DEBUG LISTINGS ---
-              echo [1] dir C:\\DelphiCompiler\\Componentes
-              dir "C:\\DelphiCompiler\\Componentes" 2>nul
-              echo [2] dir C:\\DelphiCompiler\\Componentes\\ACBr
-              dir "C:\\DelphiCompiler\\Componentes\\ACBr" 2>nul
-              echo [3] dir C:\\DelphiCompiler\\Componentes\\ACBr\\Fontes
-              dir "C:\\DelphiCompiler\\Componentes\\ACBr\\Fontes" 2>nul
-              echo [4] dir \\\\testes-pc\\DelphiCompiler\\Componentes\\ACBr
-              dir "\\\\testes-pc\\DelphiCompiler\\Componentes\\ACBr" 2>nul
-              exit /b 1
+              if "%FOUND_ACBR%"=="" (
+                echo FOUND_ACBR=
+                echo FOUND_SYN=
+                echo ERRO: Nao achei ACBrBase.pas em Fontes\\ACBrComum
+                exit /b 1
+              )
+
+              rem caminho confirmado por você:
+              set "S1=%FOUND_ACBR%\\Fontes\\Terceiros\\synalist"
+              set "FOUND_SYN="
+              if exist "%S1%\\synautil.pas" (
+                set "FOUND_SYN=%S1%"
+              )
+
+              echo FOUND_ACBR=%FOUND_ACBR%
+              echo FOUND_SYN=%FOUND_SYN%
+              exit /b 0
             '''
           ).trim()
 
-          def foundLine = out.readLines().find { it.startsWith('FOUND=') }
-          def found = foundLine?.substring('FOUND='.length())?.trim()
+          def lines = out.readLines()
+          def acbrLine = lines.find { it.startsWith('FOUND_ACBR=') }
+          def synLine  = lines.find { it.startsWith('FOUND_SYN=') }
 
-          if (!found) {
+          def acbrDir = acbrLine?.substring('FOUND_ACBR='.length())?.trim()
+          def synDir  = synLine?.substring('FOUND_SYN='.length())?.trim()
+
+          if (!acbrDir) {
             error("Nao foi possivel localizar ACBrBase.pas. Saida:\n${out}")
           }
+          if (!synDir) {
+            error("Nao foi possivel localizar synautil.pas em Fontes\\Terceiros\\synalist. Saida:\n${out}")
+          }
 
-          env.ACBR_DIR   = found
+          env.ACBR_DIR   = acbrDir
           env.ACBR_FONTS = "${env.ACBR_DIR}\\Fontes"
+          env.SYN_DIR    = synDir
 
-          // Para TACBrValidador (ACBrDiversos) + base
-          env.ACBR_PATH  = "${env.ACBR_FONTS}\\ACBrComum;${env.ACBR_FONTS}\\ACBrDiversos;${env.ACBR_FONTS}\\ACBrTCP"
+          env.ACBR_PATH =
+            "${env.ACBR_FONTS}\\ACBrComum;" +
+            "${env.ACBR_FONTS}\\ACBrDiversos;" +
+            "${env.ACBR_FONTS}\\ACBrTCP;" +
+            "${env.SYN_DIR}"
 
           echo "ACBR_DIR resolvido: ${env.ACBR_DIR}"
           echo "ACBR_FONTS: ${env.ACBR_FONTS}"
+          echo "SYN_DIR: ${env.SYN_DIR}"
           echo "ACBR_PATH: ${env.ACBR_PATH}"
         }
       }
