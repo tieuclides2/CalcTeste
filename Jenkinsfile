@@ -175,25 +175,30 @@ pipeline {
     }
 
     // Se você quiser reativar testes depois, a gente ajusta quando você confirmar qual .dproj de testes.
-    /*
+    
     stage('Build TESTS (CalcTeste)') {
       steps {
         dir('CalcTeste') {
-          bat '''@echo off
-          call "%RSVARS%"
-          set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcTeste\\%PLAT%\\%CFG%"
-          if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+          bat """@echo off
+          echo === RUN TESTS ===
 
-          msbuild "SEU_TESTE.dproj" /t:Build ^
-            /p:Config=%CFG% /p:Platform=%PLAT% ^
-            /p:DCC_UnitSearchPath="%UNIT_PATH%" ^
-            /p:DCC_IncludePath="%UNIT_PATH%" ^
-            /p:DCC_DcuOutput="%DCU_OUT%" ^
-            /fl /flp:logfile=msbuild_calcteste.log;verbosity=minimal
+          if not exist "Win32\\Release\\Project1.exe" (
+            echo ERRO: Test runner nao encontrado: Win32\\Release\\Project1.exe
+            dir "Win32\\Release"
+            exit /b 3
+          )
+
+          rem DUnitX console runner costuma aceitar parametros; se nao aceitar, ele roda e retorna errorlevel.
+          "Win32\\Release\\Project1.exe"
+          set ERR=%ERRORLEVEL%
+          echo Test runner exit code: %ERR%
+
+          exit /b %ERR%
           '''
         }
       }
     }
-    */
+  
   }
 }
+
