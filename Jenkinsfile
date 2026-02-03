@@ -3,9 +3,16 @@
 @NonCPS
 String extractMissingUnit(String logText) {
   if (logText == null) return null
-  def m = (logText =~ /(?i)error\s+F2613:\s+Unit\s+'([^']+)'\s+not\s+found/)
-  return (m && m.size() > 0) ? m[0][1] : null
+
+  def p = java.util.regex.Pattern.compile(
+    "error\\s+F2613:\\s+Unit\\s+'([^']+)'\\s+not\\s+found",
+    java.util.regex.Pattern.CASE_INSENSITIVE
+  )
+  def m = p.matcher(logText)
+  if (m.find()) return m.group(1)
+  return null
 }
+
 
 String q(String p) { return "\"${p}\"" } // quote helper for bat/msbuild
 
@@ -145,7 +152,7 @@ pipeline {
                 call ${q(env.RSVARS)}
                 echo === MSBUILD Calc.dproj CFG=${env.CFG} PLAT=${env.PLAT} ===
 
-                set DCU_OUT=${q(env.DCU_CACHE)}\\CalcProject\\${env.PLAT}\\${env.CFG}
+                set "DCU_OUT=%JENKINS_CACHE%\DCU\CalcProject\%PLAT%\%CFG%"
                 if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
 
                 msbuild "Calc.dproj" /t:Build ^
@@ -239,7 +246,7 @@ pipeline {
                   /p:DCC_UnitSearchPath=${q(env.UNIT_PATH)} ^
                   /p:DCC_IncludePath=${q(env.UNIT_PATH)} ^
                   /p:DCC_OutputDir=${q("${env.PLAT}\\\\${env.CFG}")} ^
-                  /p:DCC_DcuOutput=${q("%DCU_OUT%")} ^
+                  /p:DCC_DcuOutput="%DCU_OUT%" ^
                   /fl /flp:logfile=${logFile};verbosity=diagnostic
 
                 exit /b %errorlevel%
@@ -319,3 +326,4 @@ pipeline {
     }
   }
 }
+
