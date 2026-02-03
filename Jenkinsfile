@@ -1,205 +1,323 @@
-pipeline {
-  agent any
-  options { timestamps() }
+// Jenkinsfile (Windows agent) - Delphi + vendors + FastReport + cache global
 
-  parameters {
-    booleanParam(name: 'CLEAN_GLOBAL_CACHE', defaultValue: false, description: 'Limpa o cache global de DCU (para quando atualizar vendors como ACBr).')
-    choice(name: 'PLATFORM', choices: ['Win32', 'Win64'], description: 'Plataforma do build.')
-    choice(name: 'CONFIG', choices: ['Release', 'Debug'], description: 'Configuração do build.')
+@NonCPS
+String extractMissingUnit(String logText) {
+  if (logText == null) return null
+  def m = (logText =~ /error\s+F2613:\s+Unit\s+'([^']+)'\s+not\s+found/i)
+  return (m && m.size() > 0) ? m[0][1] : null
+}
+
+String q(String p) { return "\"${p}\"" } // quote helper for bat/msbuild
+
+pipeline {
+  agent { label 'delphi-qa' }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
   }
 
   environment {
-    DELPHI_HOME = 'C:\\DelphiCompiler\\23.0'
+    // Delphi
+    DELPHI_ROOT = 'C:\\DelphiCompiler\\23.0'
+    RSVARS      = 'C:\\DelphiCompiler\\23.0\\bin\\rsvars.bat'
 
-    // Cache global centralizado
-    CACHE_ROOT = 'C:\\Jenkins\\delphi-qa\\JenkinsCache'
+    // Vendors base
+    COMPONENTES = 'C:\\DelphiCompiler\\Componentes'
 
-    // Vendors (padrão: tudo dentro de C:\DelphiCompiler\Componentes)
-    COMPONENTES_ROOT = 'C:\\DelphiCompiler\\Componentes'
-    WEBCHARTS_DIR    = 'C:\\DelphiCompiler\\Componentes\\TBGWebCharts'
-    ACBR_DIR         = 'C:\\DelphiCompiler\\Componentes\\ACBr'
-    BCEDITOR_DIR     = 'C:\\DelphiCompiler\\Componentes\\BCEditor'
-    REDSIS_DIR       = 'C:\\DelphiCompiler\\Componentes\\RedsisComponents'
+    // Cache global
+    JENKINS_CACHE = 'C:\\Jenkins\\delphi-qa\\JenkinsCache'
+    DCU_CACHE     = 'C:\\Jenkins\\delphi-qa\\JenkinsCache\\DCU'
+
+    // Build defaults
+    CFG  = 'Release'
+    PLAT = 'Win32'
   }
 
   stages {
-
     stage('Checkout (2 repos)') {
       steps {
         deleteDir()
-        dir('CalcProject') { git branch: 'main', url: 'https://github.com/tieuclides2/CalcProject.git' }
-        dir('CalcTeste')   { git branch: 'main', url: 'https://github.com/tieuclides2/CalcTeste.git' }
+
+        dir('CalcProject') {
+          git url: 'https://github.com/tieuclides2/CalcProject.git', branch: 'main'
+        }
+
+        dir('CalcTeste') {
+          git url: 'https://github.com/tieuclides2/CalcTeste.git', branch: 'main'
+        }
       }
     }
 
     stage('Prepare environment (diagnóstico)') {
       steps {
         bat """
-          @echo on
           echo === WHOAMI / CONTEXTO ===
           whoami
           echo.
 
           echo === Delphi Env ===
-          if not exist "%DELPHI_HOME%\\bin\\rsvars.bat" (
-            echo ERRO: rsvars.bat nao encontrado em %DELPHI_HOME%\\bin
+          if not exist ${q(env.RSVARS)} (
+            echo ERRO: rsvars.bat nao encontrado em ${env.RSVARS}
             exit /b 1
           )
-          call "%DELPHI_HOME%\\bin\\rsvars.bat"
+          call ${q(env.RSVARS)}
           where msbuild
           where dcc32
           echo.
 
           echo === Componentes ===
-          if not exist "%COMPONENTES_ROOT%" (
-            echo ERRO: Pasta Componentes nao existe: %COMPONENTES_ROOT%
+          if not exist ${q(env.COMPONENTES)} (
+            echo ERRO: Pasta Componentes nao existe: ${env.COMPONENTES}
             exit /b 1
           )
-          dir "%COMPONENTES_ROOT%" /ad
+          dir ${q(env.COMPONENTES)} /ad
           echo.
 
-          echo === Cache Root ===
-          if not exist "%CACHE_ROOT%" (
-            mkdir "%CACHE_ROOT%"
-          )
-          dir "%CACHE_ROOT%" /ad
+          echo === Cache ===
+          if not exist ${q(env.JENKINS_CACHE)} mkdir ${q(env.JENKINS_CACHE)}
+          if not exist ${q(env.DCU_CACHE)} mkdir ${q(env.DCU_CACHE)}
+          dir ${q(env.JENKINS_CACHE)} /ad
         """
       }
     }
 
-    stage('Resolver paths (ACBr + vendors)') {
+    stage('Resolver roots (vendors + FastReport)') {
       steps {
         script {
-          // ACBr paths mínimos + Terceiros (onde geralmente ficam synapse/faststring/gziputils etc)
-          // (Como você já confirmou que seus terceiros ficam dentro da estrutura do ACBr, isso cobre bem.)
-          env.ACBR_PATH = [
-            "${env.ACBR_DIR}\\Fontes\\ACBrComum",
-            "${env.ACBR_DIR}\\Fontes\\ACBrDiversos",
-            "${env.ACBR_DIR}\\Fontes\\ACBrTCP",
-            "${env.ACBR_DIR}\\Fontes\\Terceiros",
-            "${env.ACBR_DIR}\\Fontes\\Terceiros\\synalist",
-            "${env.ACBR_DIR}\\Fontes\\Terceiros\\FastStringReplace",
-            "${env.ACBR_DIR}\\Fontes\\Terceiros\\GZIPUtils"
+          // Vendors existentes no seu servidor
+          def webChartsDir = "${env.COMPONENTES}\\TBGWebCharts"
+          def acbrDir      = "${env.COMPONENTES}\\ACBr"
+          def bceditorDir  = "${env.COMPONENTES}\\BCEditor"
+          def redsisDir    = "${env.COMPONENTES}\\RedsisComponents"
+
+          // FastReport (pela sua estrutura no print)
+          def frBase   = "${env.COMPONENTES}\\Fast Reports\\VCL\\2025.2.2"
+          def frSrc    = "${frBase}\\Sources"
+          def frLib    = "${frBase}\\LibRS29"
+
+          // ACBr subpaths (o que você já vinha usando)
+          def acbrPath = [
+            "${acbrDir}\\Fontes\\ACBrComum",
+            "${acbrDir}\\Fontes\\ACBrDiversos",
+            "${acbrDir}\\Fontes\\ACBrTCP",
+            "${acbrDir}\\Fontes\\Terceiros\\synalist",
+            "${acbrDir}\\Fontes\\Terceiros\\FastStringReplace",
+            "${acbrDir}\\Fontes\\Terceiros\\GZIPUtils",
+            "${acbrDir}\\Fontes\\Terceiros"
           ].join(';')
 
-          // Cache DCU global por projeto (evita “entupir” Win32\Release do workspace)
-          env.DCU_CACHE_APP   = "${env.CACHE_ROOT}\\DCU\\D23\\${params.PLATFORM}\\${params.CONFIG}\\CalcProject"
-          env.DCU_CACHE_TESTS = "${env.CACHE_ROOT}\\DCU\\D23\\${params.PLATFORM}\\${params.CONFIG}\\CalcTeste"
-
-          // UnitSearchPath (cache primeiro ajuda a “reusar”, depois fontes)
-          // Obs: se não achar DCU no cache, ele cai para fontes e recompila, jogando o DCU no cache (via DCC_DcuOutput)
-          env.UNIT_PATH_APP = [
-            env.DCU_CACHE_APP,
-            env.WEBCHARTS_DIR,
-            env.ACBR_PATH,
-            env.BCEDITOR_DIR,
-            env.REDSIS_DIR
+          // FastReport path: fonte + libs (DCU)
+          // (mesmo que frLib não tenha DCU, deixar no path não atrapalha)
+          def frPath = [
+            frSrc,
+            frLib
           ].join(';')
 
-          env.UNIT_PATH_TESTS = [
-            env.DCU_CACHE_TESTS,
-            // cache do app ajuda o projeto de testes a achar units do app sem recompilar
-            env.DCU_CACHE_APP,
-            "${env.WORKSPACE}\\CalcProject",
-            env.WEBCHARTS_DIR,
-            env.ACBR_PATH,
-            env.BCEDITOR_DIR,
-            env.REDSIS_DIR
+          // Path inicial do compilador (vendor paths “known good”)
+          // (ordem importa: preferir DCU/lib antes de sources, se houver)
+          env.UNIT_PATH = [
+            webChartsDir,
+            acbrPath,
+            frPath
           ].join(';')
 
-          echo "WEBCHARTS_DIR: ${env.WEBCHARTS_DIR}"
-          echo "ACBR_DIR: ${env.ACBR_DIR}"
-          echo "ACBR_PATH: ${env.ACBR_PATH}"
-          echo "DCU_CACHE_APP: ${env.DCU_CACHE_APP}"
-          echo "DCU_CACHE_TESTS: ${env.DCU_CACHE_TESTS}"
-          echo "UNIT_PATH_APP: ${env.UNIT_PATH_APP}"
-          echo "UNIT_PATH_TESTS: ${env.UNIT_PATH_TESTS}"
+          // Roots para auto-inject (procura UnitName.pas dentro desses lugares)
+          env.VENDOR_ROOTS = [
+            webChartsDir,
+            acbrDir,
+            "${acbrDir}\\Fontes",
+            "${acbrDir}\\Fontes\\Terceiros",
+            bceditorDir,
+            redsisDir,
+            frBase,
+            frSrc,
+            frLib
+          ].join(';')
+
+          echo "WEBCHARTS_DIR: ${webChartsDir}"
+          echo "ACBR_DIR: ${acbrDir}"
+          echo "BCEDITOR_DIR: ${bceditorDir}"
+          echo "REDSIS_DIR: ${redsisDir}"
+          echo "FASTREPORT_BASE: ${frBase}"
+          echo "FASTREPORT_SOURCES: ${frSrc}"
+          echo "FASTREPORT_LIB: ${frLib}"
+          echo "UNIT_PATH: ${env.UNIT_PATH}"
+          echo "VENDOR_ROOTS: ${env.VENDOR_ROOTS}"
         }
-
-        bat """
-          @echo on
-          if not exist "%WEBCHARTS_DIR%\\View.WebCharts.pas" (
-            echo ERRO: View.WebCharts.pas nao encontrado em %WEBCHARTS_DIR%
-            exit /b 1
-          )
-
-          if not exist "%ACBR_DIR%\\Fontes" (
-            echo ERRO: ACBr Fontes nao encontrado em %ACBR_DIR%\\Fontes
-            exit /b 1
-          )
-
-          if not exist "%BCEDITOR_DIR%" (
-            echo AVISO: BCEditor nao encontrado em %BCEDITOR_DIR%
-          )
-
-          if not exist "%REDSIS_DIR%" (
-            echo AVISO: RedsisComponents nao encontrado em %REDSIS_DIR%
-          )
-        """
       }
     }
 
-    stage('Limpar cache global (opcional)') {
-      when { expression { return params.CLEAN_GLOBAL_CACHE } }
-      steps {
-        bat """
-          @echo on
-          echo Limpando cache global...
-          if exist "%DCU_CACHE_APP%"   rmdir /s /q "%DCU_CACHE_APP%"
-          if exist "%DCU_CACHE_TESTS%" rmdir /s /q "%DCU_CACHE_TESTS%"
-          echo OK.
-        """
-      }
-    }
-
-    stage('Build APP (CalcProject) usando cache global DCU') {
+    stage('Build APP (CalcProject) - auto-inject') {
       steps {
         dir('CalcProject') {
-          bat """
-            @echo on
-            call "%DELPHI_HOME%\\bin\\rsvars.bat"
+          script {
+            int maxTries = 12
 
-            if not exist "%DCU_CACHE_APP%" mkdir "%DCU_CACHE_APP%"
+            for (int i = 1; i <= maxTries; i++) {
+              echo "=== Build tentativa ${i}/${maxTries} ==="
+              echo "UnitSearchPath atual: ${env.UNIT_PATH}"
 
-            echo === MSBUILD Calc.dproj CFG=${params.CONFIG} PLAT=${params.PLATFORM} ===
-            echo DCU_CACHE_APP=%DCU_CACHE_APP%
-            echo UNIT_PATH_APP=%UNIT_PATH_APP%
+              def logFile = "msbuild_calc_try${i}.log"
 
-            msbuild "Calc.dproj" /t:Build ^
-              /p:Config=${params.CONFIG} /p:Platform=${params.PLATFORM} ^
-              /p:DCC_UnitSearchPath="%UNIT_PATH_APP%" ^
-              /p:DCC_IncludePath="%UNIT_PATH_APP%" ^
-              /p:DCC_DcuOutput="%DCU_CACHE_APP%" ^
-              /p:DCC_OutputDir="${params.PLATFORM}\\${params.CONFIG}"
+              def rc = bat(returnStatus: true, script: """
+                @echo on
+                call ${q(env.RSVARS)}
+                echo === MSBUILD Calc.dproj CFG=${env.CFG} PLAT=${env.PLAT} ===
 
-            if errorlevel 1 exit /b 1
-          """
+                rem Opcional: separar DCU do projeto (se seu MSBuild/Delphi respeitar)
+                rem Se não respeitar, apenas ignore: não quebra o build.
+                set DCU_OUT=${q(env.DCU_CACHE)}\\CalcProject\\${env.PLAT}\\${env.CFG}
+                if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+
+                msbuild "Calc.dproj" /t:Build ^
+                  /p:Config=${env.CFG} /p:Platform=${env.PLAT} ^
+                  /p:DCC_UnitSearchPath=${q(env.UNIT_PATH)} ^
+                  /p:DCC_IncludePath=${q(env.UNIT_PATH)} ^
+                  /p:DCC_OutputDir=${q("${env.PLAT}\\\\${env.CFG}")} ^
+                  /p:DCC_DcuOutput=${q("%DCU_OUT%")} ^
+                  /fl /flp:logfile=${logFile};verbosity=diagnostic
+
+                exit /b %errorlevel%
+              """)
+
+              def logText = readFile(logFile)
+              def missing = extractMissingUnit(logText)
+
+              if (rc == 0) {
+                echo "Build OK."
+                break
+              }
+
+              if (missing == null) {
+                error "Falha no build, mas não consegui extrair 'error F2613' do log (${logFile})."
+              }
+
+              echo "Unit faltando: ${missing}"
+
+              // procura UnitName.pas nos roots e injeta a pasta encontrada no UNIT_PATH
+              def foundDir = bat(returnStdout: true, script: """
+                @echo off
+                setlocal enabledelayedexpansion
+                set UNIT=${missing}
+                set ROOTS=${env.VENDOR_ROOTS}
+
+                for %%R in (!ROOTS!) do (
+                  for /f "delims=" %%F in ('dir /s /b "%%~R\\!UNIT!.pas" 2^>nul') do (
+                    for %%D in ("%%~dpF.") do (
+                      echo %%~fD
+                      exit /b 0
+                    )
+                  )
+                )
+                exit /b 1
+              """).trim()
+
+              if (!foundDir) {
+                error "Não encontrei ${missing}.pas em VENDOR_ROOTS. Adicione o root do vendor no Jenkinsfile."
+              }
+
+              // injeta apenas a pasta (sem repetir)
+              if (!env.UNIT_PATH.toLowerCase().contains(foundDir.toLowerCase())) {
+                env.UNIT_PATH = "${env.UNIT_PATH};${foundDir}"
+                echo "Injetado no UnitSearchPath: ${foundDir}"
+              } else {
+                error "Encontrei ${missing}.pas, mas a pasta já estava no UnitSearchPath e mesmo assim falhou. Verifique conflito de versões/DCU."
+              }
+
+              if (i == maxTries) {
+                error "Excedeu tentativas (${maxTries}) no build do app."
+              }
+            }
+          }
         }
       }
     }
 
-    stage('Build TESTS (CalcTeste) usando cache global DCU') {
+    stage('Build TESTS (CalcTeste) - auto-inject') {
       steps {
         dir('CalcTeste') {
-          bat """
-            @echo on
-            call "%DELPHI_HOME%\\bin\\rsvars.bat"
+          script {
+            // Ajuste aqui para o NOME REAL do .dproj de testes
+            def testDproj = 'CalcTeste.dproj'
 
-            if not exist "%DCU_CACHE_TESTS%" mkdir "%DCU_CACHE_TESTS%"
+            def exists = fileExists(testDproj)
+            if (!exists) {
+              error "Não achei ${testDproj} em CalcTeste. Ajuste o nome do projeto de testes no Jenkinsfile."
+            }
 
-            echo === MSBUILD Project1.dproj CFG=${params.CONFIG} PLAT=${params.PLATFORM} ===
-            echo DCU_CACHE_TESTS=%DCU_CACHE_TESTS%
-            echo UNIT_PATH_TESTS=%UNIT_PATH_TESTS%
+            int maxTries = 12
 
-            msbuild "Project1.dproj" /t:Build ^
-              /p:Config=${params.CONFIG} /p:Platform=${params.PLATFORM} ^
-              /p:DCC_UnitSearchPath="%UNIT_PATH_TESTS%" ^
-              /p:DCC_IncludePath="%UNIT_PATH_TESTS%" ^
-              /p:DCC_DcuOutput="%DCU_CACHE_TESTS%" ^
-              /p:DCC_OutputDir="${params.PLATFORM}\\${params.CONFIG}"
+            for (int i = 1; i <= maxTries; i++) {
+              echo "=== Build TEST tentativa ${i}/${maxTries} ==="
 
-            if errorlevel 1 exit /b 1
-          """
+              def logFile = "msbuild_tests_try${i}.log"
+
+              def rc = bat(returnStatus: true, script: """
+                @echo on
+                call ${q(env.RSVARS)}
+
+                set DCU_OUT=${q(env.DCU_CACHE)}\\CalcTeste\\${env.PLAT}\\${env.CFG}
+                if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+
+                msbuild "${testDproj}" /t:Build ^
+                  /p:Config=${env.CFG} /p:Platform=${env.PLAT} ^
+                  /p:DCC_UnitSearchPath=${q(env.UNIT_PATH)} ^
+                  /p:DCC_IncludePath=${q(env.UNIT_PATH)} ^
+                  /p:DCC_OutputDir=${q("${env.PLAT}\\\\${env.CFG}")} ^
+                  /p:DCC_DcuOutput=${q("%DCU_OUT%")} ^
+                  /fl /flp:logfile=${logFile};verbosity=diagnostic
+
+                exit /b %errorlevel%
+              """)
+
+              def logText = readFile(logFile)
+              def missing = extractMissingUnit(logText)
+
+              if (rc == 0) {
+                echo "Build TESTS OK."
+                break
+              }
+
+              if (missing == null) {
+                error "Falha nos testes, mas não consegui extrair 'error F2613' do log (${logFile})."
+              }
+
+              echo "Unit faltando (tests): ${missing}"
+
+              def foundDir = bat(returnStdout: true, script: """
+                @echo off
+                setlocal enabledelayedexpansion
+                set UNIT=${missing}
+                set ROOTS=${env.VENDOR_ROOTS}
+
+                for %%R in (!ROOTS!) do (
+                  for /f "delims=" %%F in ('dir /s /b "%%~R\\!UNIT!.pas" 2^>nul') do (
+                    for %%D in ("%%~dpF.") do (
+                      echo %%~fD
+                      exit /b 0
+                    )
+                  )
+                )
+                exit /b 1
+              """).trim()
+
+              if (!foundDir) {
+                error "Não encontrei ${missing}.pas em VENDOR_ROOTS (tests)."
+              }
+
+              if (!env.UNIT_PATH.toLowerCase().contains(foundDir.toLowerCase())) {
+                env.UNIT_PATH = "${env.UNIT_PATH};${foundDir}"
+                echo "Injetado no UnitSearchPath (tests): ${foundDir}"
+              } else {
+                error "Encontrei ${missing}.pas (tests), mas já estava no UnitSearchPath e mesmo assim falhou."
+              }
+
+              if (i == maxTries) {
+                error "Excedeu tentativas (${maxTries}) no build dos testes."
+              }
+            }
+          }
         }
       }
     }
@@ -207,18 +325,17 @@ pipeline {
     stage('Run unit tests (DUnitX)') {
       steps {
         dir('CalcTeste') {
+          // Ajuste o nome do exe de testes gerado pelo seu projeto
+          // Ex.: Win32\Release\CalcTeste.exe ou algo como Tests.exe
           bat """
             @echo on
-            set "TEST_EXE=%WORKSPACE%\\CalcTeste\\${params.PLATFORM}\\${params.CONFIG}\\Project1.exe"
-
+            set TEST_EXE=Win32\\Release\\CalcTeste.exe
             if not exist "%TEST_EXE%" (
-              echo ERRO: Test EXE nao encontrado: %TEST_EXE%
-              dir "%WORKSPACE%\\CalcTeste\\${params.PLATFORM}\\${params.CONFIG}"
+              echo ERRO: nao achei o executavel de testes: %TEST_EXE%
+              echo Ajuste o caminho/nome no Jenkinsfile.
               exit /b 1
             )
-
-            "%TEST_EXE%"
-            exit /b %ERRORLEVEL%
+            "%TEST_EXE%" --run
           """
         }
       }
@@ -227,13 +344,7 @@ pipeline {
 
   post {
     always {
-      archiveArtifacts allowEmptyArchive: true,
-        artifacts: 'CalcProject\\Win32\\**\\*.exe, CalcProject\\Win64\\**\\*.exe, CalcProject\\**\\*.dll, CalcProject\\**\\*.map',
-        fingerprint: true
-
-      archiveArtifacts allowEmptyArchive: true,
-        artifacts: 'CalcTeste\\Win32\\**\\*.exe, CalcTeste\\Win64\\**\\*.exe, CalcTeste\\**\\*.xml, CalcTeste\\**\\*.log',
-        fingerprint: true
+      archiveArtifacts artifacts: '**/Win32/**, **/*.log', allowEmptyArchive: true
     }
   }
 }
