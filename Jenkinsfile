@@ -1,5 +1,3 @@
-// Jenkinsfile (Windows agent) - Delphi + vendors + FastReport + cache global
-
 @NonCPS
 String extractMissingUnit(String logText) {
   if (logText == null) return null
@@ -13,29 +11,20 @@ String extractMissingUnit(String logText) {
   return null
 }
 
-
-String q(String p) { return "\"${p}\"" } // quote helper for bat/msbuild
-
 pipeline {
   agent { label 'delphi-qa' }
 
-  options {
-    timestamps()
-  }
-
   environment {
     // Delphi
-    DELPHI_ROOT = 'C:\\DelphiCompiler\\23.0'
-    RSVARS      = 'C:\\DelphiCompiler\\23.0\\bin\\rsvars.bat'
+    RSVARS = 'C:\\DelphiCompiler\\23.0\\bin\\rsvars.bat'
 
     // Vendors base
-    COMPONENTES = 'C:\\DelphiCompiler\\Componentes'
+    COMP_BASE = 'C:\\DelphiCompiler\\Componentes'
 
-    // Cache global
+    // Cache global (não precisa pré-criar; o pipeline cria)
     JENKINS_CACHE = 'C:\\Jenkins\\delphi-qa\\JenkinsCache'
-    DCU_CACHE     = 'C:\\Jenkins\\delphi-qa\\JenkinsCache\\DCU'
 
-    // Build defaults
+    // defaults
     CFG  = 'Release'
     PLAT = 'Win32'
   }
@@ -57,273 +46,143 @@ pipeline {
 
     stage('Prepare environment (diagnóstico)') {
       steps {
-        bat """
-          echo === WHOAMI / CONTEXTO ===
-          whoami
-          echo.
+        bat '''@echo off
+        echo === WHOAMI / CONTEXTO ===
+        whoami
+        echo.
 
-          echo === Delphi Env ===
-          if not exist ${q(env.RSVARS)} (
-            echo ERRO: rsvars.bat nao encontrado em ${env.RSVARS}
-            exit /b 1
-          )
-          call ${q(env.RSVARS)}
-          where msbuild
-          where dcc32
-          echo.
+        echo === Delphi Env ===
+        if not exist "%RSVARS%" (
+          echo ERRO: rsvars.bat nao encontrado em %RSVARS%
+          exit /b 1
+        )
+        call "%RSVARS%"
+        where msbuild
+        where dcc32
+        echo.
 
-          echo === Componentes ===
-          if not exist ${q(env.COMPONENTES)} (
-            echo ERRO: Pasta Componentes nao existe: ${env.COMPONENTES}
-            exit /b 1
-          )
-          dir ${q(env.COMPONENTES)} /ad
-          echo.
+        echo === Componentes ===
+        if not exist "%COMP_BASE%" (
+          echo ERRO: Pasta Componentes nao existe: %COMP_BASE%
+          exit /b 1
+        )
+        dir "%COMP_BASE%" /ad
+        echo.
 
-          echo === Cache ===
-          if not exist ${q(env.JENKINS_CACHE)} mkdir ${q(env.JENKINS_CACHE)}
-          if not exist ${q(env.DCU_CACHE)} mkdir ${q(env.DCU_CACHE)}
-          dir ${q(env.JENKINS_CACHE)} /ad
-        """
+        echo === Cache ===
+        if not exist "%JENKINS_CACHE%" mkdir "%JENKINS_CACHE%"
+        if not exist "%JENKINS_CACHE%\\DCU" mkdir "%JENKINS_CACHE%\\DCU"
+        dir "%JENKINS_CACHE%" /ad
+        '''
       }
     }
 
     stage('Resolver roots (vendors + FastReport)') {
       steps {
         script {
-          def webChartsDir = "${env.COMPONENTES}\\TBGWebCharts"
-          def acbrDir      = "${env.COMPONENTES}\\ACBr"
-          def bceditorDir  = "${env.COMPONENTES}\\BCEditor"
-          def redsisDir    = "${env.COMPONENTES}\\RedsisComponents"
+          def webcharts = "${env.COMP_BASE}\\TBGWebCharts"
+          def acbr      = "${env.COMP_BASE}\\ACBr"
+          def bceditor  = "${env.COMP_BASE}\\BCEditor"
+          def redsis    = "${env.COMP_BASE}\\RedsisComponents"
 
-          def frBase = "${env.COMPONENTES}\\Fast Reports\\VCL\\2025.2.2"
-          def frSrc  = "${frBase}\\Sources"
-          def frLib  = "${frBase}\\LibRS29"
-
+          // ACBr (inclui GZIPUtils e Terceiros)
           def acbrPath = [
-            "${acbrDir}\\Fontes\\ACBrComum",
-            "${acbrDir}\\Fontes\\ACBrDiversos",
-            "${acbrDir}\\Fontes\\ACBrTCP",
-            "${acbrDir}\\Fontes\\Terceiros\\synalist",
-            "${acbrDir}\\Fontes\\Terceiros\\FastStringReplace",
-            "${acbrDir}\\Fontes\\Terceiros\\GZIPUtils",
-            "${acbrDir}\\Fontes\\Terceiros"
+            "${acbr}\\Fontes\\ACBrComum",
+            "${acbr}\\Fontes\\ACBrDiversos",
+            "${acbr}\\Fontes\\ACBrTCP",
+            "${acbr}\\Fontes\\Terceiros\\synalist",
+            "${acbr}\\Fontes\\Terceiros\\FastStringReplace",
+            "${acbr}\\Fontes\\Terceiros\\GZIPUtils",
+            "${acbr}\\Fontes\\Terceiros"
           ].join(';')
 
-          def frPath = [ frSrc, frLib ].join(';')
+          // FastReport (ajuste a versão se mudar)
+          def frBase    = "${env.COMP_BASE}\\Fast Reports\\VCL\\2025.2.2"
+          def frSources = "${frBase}\\Sources"
+          def frLib     = "${frBase}\\LibRS29"
 
-          env.UNIT_PATH = [ webChartsDir, acbrPath, frPath ].join(';')
-
-          env.VENDOR_ROOTS = [
-            webChartsDir,
-            acbrDir,
-            "${acbrDir}\\Fontes",
-            "${acbrDir}\\Fontes\\Terceiros",
-            bceditorDir,
-            redsisDir,
-            frBase,
-            frSrc,
+          env.UNIT_PATH = [
+            webcharts,
+            acbrPath,
+            frSources,
             frLib
           ].join(';')
 
-          echo "FASTREPORT_BASE: ${frBase}"
-          echo "FASTREPORT_SOURCES: ${frSrc}"
-          echo "FASTREPORT_LIB: ${frLib}"
+          // roots para busca “auto-inject” (se você tiver essa lógica ativa)
+          env.VENDOR_ROOTS = [
+            webcharts,
+            acbr, "${acbr}\\Fontes", "${acbr}\\Fontes\\Terceiros",
+            bceditor,
+            redsis,
+            frBase,
+            frSources,
+            frLib
+          ].join(';')
+
           echo "UNIT_PATH: ${env.UNIT_PATH}"
           echo "VENDOR_ROOTS: ${env.VENDOR_ROOTS}"
         }
       }
     }
 
-    stage('Build APP (CalcProject) - auto-inject') {
+    stage('Build APP (CalcProject)') {
       steps {
         dir('CalcProject') {
           script {
-            int maxTries = 12
+            // log file do msbuild
+            def mslog = "msbuild_calc_try1.log"
 
-            for (int i = 1; i <= maxTries; i++) {
-              echo "=== Build tentativa ${i}/${maxTries} ==="
-              echo "UnitSearchPath atual: ${env.UNIT_PATH}"
+            // build
+            bat """@echo off
+            call "%RSVARS%"
+            echo === MSBUILD Calc.dproj CFG=%CFG% PLAT=%PLAT% ===
 
-              def logFile = "msbuild_calc_try${i}.log"
+            set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcProject\\%PLAT%\\%CFG%"
+            if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
 
-              def rc = bat(returnStatus: true, script: """
-                @echo on
-                call ${q(env.RSVARS)}
-                echo === MSBUILD Calc.dproj CFG=${env.CFG} PLAT=${env.PLAT} ===
+            msbuild "Calc.dproj" /t:Build ^
+              /p:Config=%CFG% /p:Platform=%PLAT% ^
+              /p:DCC_UnitSearchPath="${env.UNIT_PATH}" ^
+              /p:DCC_IncludePath="${env.UNIT_PATH}" ^
+              /p:DCC_DcuOutput="%DCU_OUT%" ^
+              /p:DCC_OutputDir="Win32\\\\Release" ^
+              /fl /flp:logfile=${mslog};verbosity=minimal
 
-                set "DCU_OUT=%JENKINS_CACHE%\DCU\CalcProject\%PLAT%\%CFG%"
-                if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+            exit /b %ERRORLEVEL%
+            """
 
-                msbuild "Calc.dproj" /t:Build ^
-                  /p:Config=${env.CFG} /p:Platform=${env.PLAT} ^
-                  /p:DCC_UnitSearchPath=${q(env.UNIT_PATH)} ^
-                  /p:DCC_IncludePath=${q(env.UNIT_PATH)} ^
-                  /p:DCC_OutputDir=${q("${env.PLAT}\\\\${env.CFG}")} ^
-                  /p:DCC_DcuOutput=${q("%DCU_OUT%")} ^
-                  /fl /flp:logfile=${logFile};verbosity=diagnostic
-
-                exit /b %errorlevel%
-              """)
-
-              def logText = readFile(logFile)
-              def missing = extractMissingUnit(logText)
-
-              if (rc == 0) {
-                echo "Build OK."
-                break
-              }
-
-              if (missing == null) {
-                error "Falha no build, mas não consegui extrair 'error F2613' do log (${logFile})."
-              }
-
-              echo "Unit faltando: ${missing}"
-
-              def foundDir = bat(returnStdout: true, script: """
-                @echo off
-                setlocal enabledelayedexpansion
-                set UNIT=${missing}
-                set ROOTS=${env.VENDOR_ROOTS}
-
-                for %%R in (!ROOTS!) do (
-                  for /f "delims=" %%F in ('dir /s /b "%%~R\\!UNIT!.pas" 2^>nul') do (
-                    for %%D in ("%%~dpF.") do (
-                      echo %%~fD
-                      exit /b 0
-                    )
-                  )
-                )
-                exit /b 1
-              """).trim()
-
-              if (!foundDir) {
-                error "Não encontrei ${missing}.pas em VENDOR_ROOTS."
-              }
-
-              if (!env.UNIT_PATH.toLowerCase().contains(foundDir.toLowerCase())) {
-                env.UNIT_PATH = "${env.UNIT_PATH};${foundDir}"
-                echo "Injetado no UnitSearchPath: ${foundDir}"
-              } else {
-                error "Encontrei ${missing}.pas, mas a pasta já estava no UnitSearchPath e mesmo assim falhou."
-              }
-
-              if (i == maxTries) {
-                error "Excedeu tentativas (${maxTries}) no build do app."
-              }
+            // se falhar, tenta extrair a unit faltando (sem sandbox-bans)
+            def txt = readFile(mslog)
+            def missing = extractMissingUnit(txt)
+            if (missing != null) {
+              echo "Unit faltando detectada: ${missing}"
+              error("Falha na compilação: unit '${missing}' não encontrada. Ajuste UNIT_PATH/VENDOR_ROOTS para incluir a pasta onde está ${missing}.pas")
             }
           }
         }
       }
     }
 
-    stage('Build TESTS (CalcTeste) - auto-inject') {
+    // Se você quiser reativar testes depois, a gente ajusta quando você confirmar qual .dproj de testes.
+    /*
+    stage('Build TESTS (CalcTeste)') {
       steps {
         dir('CalcTeste') {
-          script {
-            def testDproj = 'CalcTeste.dproj' // AJUSTE se o nome for outro
+          bat '''@echo off
+          call "%RSVARS%"
+          set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcTeste\\%PLAT%\\%CFG%"
+          if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
 
-            if (!fileExists(testDproj)) {
-              error "Não achei ${testDproj} em CalcTeste. Ajuste o nome do projeto de testes no Jenkinsfile."
-            }
-
-            int maxTries = 12
-
-            for (int i = 1; i <= maxTries; i++) {
-              echo "=== Build TEST tentativa ${i}/${maxTries} ==="
-
-              def logFile = "msbuild_tests_try${i}.log"
-
-              def rc = bat(returnStatus: true, script: """
-                @echo on
-                call ${q(env.RSVARS)}
-
-                set DCU_OUT=${q(env.DCU_CACHE)}\\CalcTeste\\${env.PLAT}\\${env.CFG}
-                if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
-
-                msbuild "${testDproj}" /t:Build ^
-                  /p:Config=${env.CFG} /p:Platform=${env.PLAT} ^
-                  /p:DCC_UnitSearchPath=${q(env.UNIT_PATH)} ^
-                  /p:DCC_IncludePath=${q(env.UNIT_PATH)} ^
-                  /p:DCC_OutputDir=${q("${env.PLAT}\\\\${env.CFG}")} ^
-                  /p:DCC_DcuOutput="%DCU_OUT%" ^
-                  /fl /flp:logfile=${logFile};verbosity=diagnostic
-
-                exit /b %errorlevel%
-              """)
-
-              def logText = readFile(logFile)
-              def missing = extractMissingUnit(logText)
-
-              if (rc == 0) {
-                echo "Build TESTS OK."
-                break
-              }
-
-              if (missing == null) {
-                error "Falha nos testes, mas não consegui extrair 'error F2613' do log (${logFile})."
-              }
-
-              echo "Unit faltando (tests): ${missing}"
-
-              def foundDir = bat(returnStdout: true, script: """
-                @echo off
-                setlocal enabledelayedexpansion
-                set UNIT=${missing}
-                set ROOTS=${env.VENDOR_ROOTS}
-
-                for %%R in (!ROOTS!) do (
-                  for /f "delims=" %%F in ('dir /s /b "%%~R\\!UNIT!.pas" 2^>nul') do (
-                    for %%D in ("%%~dpF.") do (
-                      echo %%~fD
-                      exit /b 0
-                    )
-                  )
-                )
-                exit /b 1
-              """).trim()
-
-              if (!foundDir) {
-                error "Não encontrei ${missing}.pas em VENDOR_ROOTS (tests)."
-              }
-
-              if (!env.UNIT_PATH.toLowerCase().contains(foundDir.toLowerCase())) {
-                env.UNIT_PATH = "${env.UNIT_PATH};${foundDir}"
-                echo "Injetado no UnitSearchPath (tests): ${foundDir}"
-              } else {
-                error "Encontrei ${missing}.pas (tests), mas já estava no UnitSearchPath e mesmo assim falhou."
-              }
-
-              if (i == maxTries) {
-                error "Excedeu tentativas (${maxTries}) no build dos testes."
-              }
-            }
-          }
+          msbuild "SEU_TESTE.dproj" /t:Build ^
+            /p:Config=%CFG% /p:Platform=%PLAT% ^
+            /p:DCC_UnitSearchPath="%UNIT_PATH%" ^
+            /p:DCC_IncludePath="%UNIT_PATH%" ^
+            /p:DCC_DcuOutput="%DCU_OUT%" ^
+            /fl /flp:logfile=msbuild_calcteste.log;verbosity=minimal
+          '''
         }
       }
     }
-
-    stage('Run unit tests (DUnitX)') {
-      steps {
-        dir('CalcTeste') {
-          bat """
-            @echo on
-            set TEST_EXE=Win32\\Release\\CalcTeste.exe
-            if not exist "%TEST_EXE%" (
-              echo ERRO: nao achei o executavel de testes: %TEST_EXE%
-              exit /b 1
-            )
-            "%TEST_EXE%" --run
-          """
-        }
-      }
-    }
-  }
-
-  post {
-    always {
-      archiveArtifacts artifacts: '**/Win32/**, **/*.log', allowEmptyArchive: true
-    }
+    */
   }
 }
-
