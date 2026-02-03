@@ -5,8 +5,6 @@ pipeline {
   environment {
     DELPHI_HOME    = 'C:\\DelphiCompiler\\23.0'
     COMPONENTS     = 'C:\\DelphiCompiler\\Componentes'
-
-    // Evita colisão com variável PLATFORM do serviço/sistema
     BUILD_PLATFORM = 'Win32'
     BUILD_CONFIG   = 'Release'
   }
@@ -174,9 +172,19 @@ pipeline {
 }
 
 /**
- * Roda o msbuild em loop.
- * Se falhar com F2613 Unit 'X' not found, procura X.pas em vendorRoots e injeta o dir automaticamente.
+ * Extrai o nome da Unit faltando (F2613) SEM regex Matcher (evita NotSerializableException no CPS).
  */
+def extractMissingUnit(String text) {
+  // procura: error F2613: Unit 'XXXX' not found.
+  def marker = "error F2613: Unit '"
+  def i = text.indexOf(marker)
+  if (i < 0) return null
+  def start = i + marker.length()
+  def end = text.indexOf("'", start)
+  if (end < 0) return null
+  return text.substring(start, end).trim()
+}
+
 def buildWithAutoInject(String dproj, String baseUnitPath, String vendorRoots) {
   int maxTries = 12
   def injected = [] as Set
@@ -188,16 +196,13 @@ def buildWithAutoInject(String dproj, String baseUnitPath, String vendorRoots) {
     echo "=== Build tentativa ${i}/${maxTries} ==="
     echo "UnitSearchPath atual: ${unitPath}"
 
-    // Importante: NÃO pode falhar o step bat, senão não conseguimos parsear e iterar.
     def out = bat(returnStdout: true, script: """
       @echo off
       setlocal EnableExtensions EnableDelayedExpansion
 
       call "%DELPHI_HOME%\\bin\\rsvars.bat"
-
       set "CFG=%BUILD_CONFIG%"
       set "PLAT=%BUILD_PLATFORM%"
-
       set "LOG=msbuild_${i}.log"
 
       msbuild "${dproj}" /t:Build ^
@@ -207,10 +212,8 @@ def buildWithAutoInject(String dproj, String baseUnitPath, String vendorRoots) {
         /p:DCC_OutputDir="Win32\\\\!CFG!" > "!LOG!" 2>&1
 
       set "RC=!ERRORLEVEL!"
-
       type "!LOG!"
       echo __RC__=!RC!
-
       exit /b 0
     """).trim()
 
@@ -222,13 +225,11 @@ def buildWithAutoInject(String dproj, String baseUnitPath, String vendorRoots) {
       return
     }
 
-    // Tenta extrair unit faltando
-    def m = (out =~ /error F2613: Unit '([^']+)' not found\./)
-    if (!m.find()) {
+    def unitName = extractMissingUnit(out)
+    if (!unitName) {
       error("Build falhou (RC=${rc}) mas não é F2613 (Unit not found).\n\n${out}")
     }
 
-    def unitName = m.group(1)
     echo "Unit faltando: ${unitName}"
 
     def foundDir = bat(returnStdout: true, script: """
@@ -246,7 +247,6 @@ def buildWithAutoInject(String dproj, String baseUnitPath, String vendorRoots) {
           )
         )
       )
-
       exit /b 1
     """).trim()
 
