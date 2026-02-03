@@ -48,41 +48,25 @@ pipeline {
     stage('Resolver path do WebCharts') {
       steps {
         script {
-          def out = bat(
-            returnStdout: true,
-            script: '''
-              @echo off
-              setlocal EnableExtensions EnableDelayedExpansion
+          def out = bat(returnStdout: true, script: '''
+            @echo off
+            setlocal EnableExtensions EnableDelayedExpansion
+            set "C1=C:\\DelphiCompiler\\Componentes\\TBGWebCharts"
+            set "C2=C:\\DelphiCompiler\\Componentes\\TBGWebCharts\\TBGWebCharts"
+            set "C3=\\\\testes-pc\\DelphiCompiler\\Componentes\\TBGWebCharts"
 
-              set "C1=C:\\DelphiCompiler\\Componentes\\TBGWebCharts"
-              set "C2=C:\\DelphiCompiler\\Componentes\\TBGWebCharts\\TBGWebCharts"
-              set "C3=\\\\testes-pc\\DelphiCompiler\\Componentes\\TBGWebCharts"
-
-              for %%P in ("%C1%" "%C2%" "%C3%") do (
-                if exist "%%~P\\View.WebCharts.pas" (
-                  echo FOUND=%%~P
-                  exit /b 0
-                )
+            for %%P in ("%C1%" "%C2%" "%C3%") do (
+              if exist "%%~P\\View.WebCharts.pas" (
+                echo FOUND=%%~P
+                exit /b 0
               )
+            )
+            echo FOUND=
+            exit /b 1
+          ''').trim()
 
-              echo FOUND=
-              echo --- DEBUG LISTINGS ---
-              echo [1] dir C:\\DelphiCompiler\\Componentes
-              dir "C:\\DelphiCompiler\\Componentes" 2>nul
-              echo [2] dir C:\\DelphiCompiler\\Componentes\\TBGWebCharts
-              dir "C:\\DelphiCompiler\\Componentes\\TBGWebCharts" 2>nul
-              echo [3] dir \\\\testes-pc\\DelphiCompiler\\Componentes\\TBGWebCharts
-              dir "\\\\testes-pc\\DelphiCompiler\\Componentes\\TBGWebCharts" 2>nul
-              exit /b 1
-            '''
-          ).trim()
-
-          def foundLine = out.readLines().find { it.startsWith('FOUND=') }
-          def found = foundLine?.substring('FOUND='.length())?.trim()
-
-          if (!found) {
-            error("Nao foi possivel localizar View.WebCharts.pas. Saida:\n${out}")
-          }
+          def found = out.readLines().find { it.startsWith('FOUND=') }?.substring('FOUND='.length())?.trim()
+          if (!found) error("Nao foi possivel localizar View.WebCharts.pas. Saida:\n${out}")
 
           env.WEBCHARTS_DIR = found
           echo "WEBCHARTS_DIR resolvido: ${env.WEBCHARTS_DIR}"
@@ -90,127 +74,235 @@ pipeline {
       }
     }
 
-    stage('Resolver path do ACBr + Synapse (synalist)') {
+    stage('Resolver ACBr (base)') {
       steps {
         script {
-          def out = bat(
-            returnStdout: true,
-            script: '''
-              @echo off
-              setlocal EnableExtensions EnableDelayedExpansion
+          def out = bat(returnStdout: true, script: '''
+            @echo off
+            setlocal EnableExtensions EnableDelayedExpansion
 
-              set "A1=C:\\DelphiCompiler\\Componentes\\ACBr"
-              set "A2=\\\\testes-pc\\DelphiCompiler\\Componentes\\ACBr"
+            set "A1=C:\\DelphiCompiler\\Componentes\\ACBr"
+            set "A2=\\\\testes-pc\\DelphiCompiler\\Componentes\\ACBr"
 
-              set "FOUND_ACBR="
-              for %%P in ("%A1%" "%A2%") do (
-                if exist "%%~P\\Fontes\\ACBrComum\\ACBrBase.pas" (
-                  set "FOUND_ACBR=%%~P"
-                  goto :acbr_ok
-                )
+            set "FOUND_ACBR="
+            for %%P in ("%A1%" "%A2%") do (
+              if exist "%%~P\\Fontes\\ACBrComum\\ACBrBase.pas" (
+                set "FOUND_ACBR=%%~P"
+                goto :ok
               )
-              :acbr_ok
+            )
+            :ok
+            echo FOUND_ACBR=%FOUND_ACBR%
+          ''').trim()
 
-              if "%FOUND_ACBR%"=="" (
-                echo FOUND_ACBR=
-                echo FOUND_SYN=
-                echo ERRO: Nao achei ACBrBase.pas em Fontes\\ACBrComum
-                exit /b 1
-              )
-
-              rem caminho confirmado por você:
-              set "S1=%FOUND_ACBR%\\Fontes\\Terceiros\\synalist"
-              set "FOUND_SYN="
-              if exist "%S1%\\synautil.pas" (
-                set "FOUND_SYN=%S1%"
-              )
-
-              echo FOUND_ACBR=%FOUND_ACBR%
-              echo FOUND_SYN=%FOUND_SYN%
-              exit /b 0
-            '''
-          ).trim()
-
-          def lines = out.readLines()
-          def acbrLine = lines.find { it.startsWith('FOUND_ACBR=') }
-          def synLine  = lines.find { it.startsWith('FOUND_SYN=') }
-
-          def acbrDir = acbrLine?.substring('FOUND_ACBR='.length())?.trim()
-          def synDir  = synLine?.substring('FOUND_SYN='.length())?.trim()
-
-          if (!acbrDir) {
-            error("Nao foi possivel localizar ACBrBase.pas. Saida:\n${out}")
-          }
-          if (!synDir) {
-            error("Nao foi possivel localizar synautil.pas em Fontes\\Terceiros\\synalist. Saida:\n${out}")
-          }
+          def acbrDir = out.readLines().find { it.startsWith('FOUND_ACBR=') }?.substring('FOUND_ACBR='.length())?.trim()
+          if (!acbrDir) error("Nao foi possivel localizar ACBrBase.pas. Saida:\n${out}")
 
           env.ACBR_DIR   = acbrDir
           env.ACBR_FONTS = "${env.ACBR_DIR}\\Fontes"
-          env.SYN_DIR    = synDir
 
-          env.ACBR_PATH =
+          // paths “fixos” que você já sabe que precisa (ACBrValidator + Synapse)
+          def synDir = "${env.ACBR_FONTS}\\Terceiros\\synalist"
+
+          env.ACBR_BASE_PATH =
             "${env.ACBR_FONTS}\\ACBrComum;" +
             "${env.ACBR_FONTS}\\ACBrDiversos;" +
             "${env.ACBR_FONTS}\\ACBrTCP;" +
-            "${env.SYN_DIR}"
+            "${synDir}"
 
-          echo "ACBR_DIR resolvido: ${env.ACBR_DIR}"
-          echo "ACBR_FONTS: ${env.ACBR_FONTS}"
-          echo "SYN_DIR: ${env.SYN_DIR}"
-          echo "ACBR_PATH: ${env.ACBR_PATH}"
+          echo "ACBR_DIR: ${env.ACBR_DIR}"
+          echo "ACBR_BASE_PATH: ${env.ACBR_BASE_PATH}"
         }
       }
     }
 
-    stage('Build APP (CalcProject)') {
+    stage('Build APP (CalcProject) - auto inject Units') {
       steps {
-        dir('CalcProject') {
-          bat '''
-            @echo on
-            call "%DELPHI_HOME%\\bin\\rsvars.bat"
+        script {
+          // roots onde o “auto-find” vai procurar UnitName.pas
+          // você pode acrescentar outros vendors aqui no futuro.
+          def roots = [
+            env.WEBCHARTS_DIR,
+            "${env.ACBR_FONTS}\\ACBrComum",
+            "${env.ACBR_FONTS}\\ACBrDiversos",
+            "${env.ACBR_FONTS}\\ACBrTCP",
+            "${env.ACBR_FONTS}\\Terceiros",
+            "${env.ACBR_FONTS}" // fallback
+          ]
 
-            set "PLATFORM=Win32"
-            set "CONFIG=Release"
+          def extraPaths = [] as Set
 
-            echo WEBCHARTS_DIR=%WEBCHARTS_DIR%
-            echo ACBR_PATH=%ACBR_PATH%
+          def maxTries = 10
+          for (int i = 1; i <= maxTries; i++) {
+            def unitSearch = ([env.WEBCHARTS_DIR] + [env.ACBR_BASE_PATH] + extraPaths.toList()).join(';')
+            // normaliza ";;" caso ACBR_BASE_PATH já tenha ';' etc.
+            unitSearch = unitSearch.replaceAll(/;{2,}/, ';')
 
-            msbuild Calc.dproj /t:Build ^
-              /p:Config=%CONFIG% /p:Platform=%PLATFORM% ^
-              /p:DCC_UnitSearchPath="%WEBCHARTS_DIR%;%ACBR_PATH%" ^
-              /p:DCC_IncludePath="%WEBCHARTS_DIR%;%ACBR_PATH%" ^
-              /p:DCC_OutputDir="Win32\\%CONFIG%"
+            echo "Tentativa ${i}/${maxTries} - UnitSearchPath: ${unitSearch}"
 
-            if errorlevel 1 exit /b 1
-          '''
+            // compila e captura log
+            def log = bat(returnStdout: true, script: """
+              @echo off
+              setlocal
+              call "${env.DELPHI_HOME}\\bin\\rsvars.bat" >nul
+
+              cd /d "%WORKSPACE%\\CalcProject"
+
+              msbuild Calc.dproj /t:Build ^
+                /p:Config=Release /p:Platform=Win32 ^
+                /p:DCC_UnitSearchPath="${unitSearch}" ^
+                /p:DCC_IncludePath="${unitSearch}" ^
+                /p:DCC_OutputDir="Win32\\Release" ^
+                /nologo
+
+              echo __EXITCODE__=!ERRORLEVEL!
+            """).trim()
+
+            def exitLine = log.readLines().reverse().find { it.startsWith('__EXITCODE__=') }
+            def exitCode = (exitLine?.split('=')?.last() ?: '1') as Integer
+
+            if (exitCode == 0) {
+              echo "Build APP OK"
+              break
+            }
+
+            // tenta extrair Unit faltando:  error F2613: Unit 'XXXXX' not found.
+            def missing = null
+            for (def line : log.readLines()) {
+              def m = (line =~ /error\s+F2613:\s+Unit\s+'([^']+)'\s+not\s+found/i)
+              if (m.find()) { missing = m.group(1); break }
+            }
+
+            if (!missing) {
+              error("Falhou, mas nao consegui identificar Unit faltando no log.\n\nLOG:\n${log}")
+            }
+
+            echo "Unit faltando detectada: ${missing}"
+
+            // procura MissingUnit.pas nas roots
+            def foundDir = null
+            for (def r : roots) {
+              def out = bat(returnStdout: true, script: """
+                @echo off
+                for /f "delims=" %%F in ('dir /b /s "${r}\\${missing}.pas" 2^>nul') do (
+                  echo FOUND=%%~dpF
+                  exit /b 0
+                )
+                echo FOUND=
+              """).trim()
+
+              def f = out.readLines().find { it.startsWith('FOUND=') }?.substring('FOUND='.length())?.trim()
+              if (f) { foundDir = f.endsWith("\\") ? f[0..-2] : f; break }
+            }
+
+            if (!foundDir) {
+              error("Nao achei ${missing}.pas nas roots configuradas.\nRoots:\n- " + roots.join('\n- ') + "\n\nLOG:\n${log}")
+            }
+
+            echo "Achei ${missing}.pas em: ${foundDir}"
+            extraPaths.add(foundDir)
+
+            if (i == maxTries) {
+              error("Estourou limite de tentativas. Ultimo log:\n${log}")
+            }
+          }
+
+          // exporta os paths resolvidos pro resto do pipeline (TESTS reaproveitar)
+          env.EXTRA_UNIT_PATHS = extraPaths.toList().join(';')
+          echo "EXTRA_UNIT_PATHS final: ${env.EXTRA_UNIT_PATHS}"
         }
       }
     }
 
-    stage('Build TESTS (CalcTeste)') {
+    stage('Build TESTS (CalcTeste) - auto inject Units') {
       steps {
-        dir('CalcTeste') {
-          bat '''
-            @echo on
-            call "%DELPHI_HOME%\\bin\\rsvars.bat"
+        script {
+          def roots = [
+            env.WEBCHARTS_DIR,
+            "${env.ACBR_FONTS}\\Terceiros",
+            "${env.ACBR_FONTS}",
+            "%WORKSPACE%\\CalcProject"
+          ]
 
-            set "PLATFORM=Win32"
-            set "CONFIG=Release"
-            set "APP_SRC=%WORKSPACE%\\CalcProject"
+          def extraPaths = [] as Set
+          // já aproveita o que foi descoberto no APP
+          if (env.EXTRA_UNIT_PATHS?.trim()) {
+            env.EXTRA_UNIT_PATHS.split(';').each { p ->
+              if (p?.trim()) extraPaths.add(p.trim())
+            }
+          }
 
-            echo WEBCHARTS_DIR=%WEBCHARTS_DIR%
-            echo ACBR_PATH=%ACBR_PATH%
-            echo APP_SRC=%APP_SRC%
+          def maxTries = 10
+          for (int i = 1; i <= maxTries; i++) {
+            def appSrc = "${env.WORKSPACE}\\CalcProject"
+            def unitSearch = ([appSrc, env.WEBCHARTS_DIR, env.ACBR_BASE_PATH] + extraPaths.toList()).join(';')
+            unitSearch = unitSearch.replaceAll(/;{2,}/, ';')
 
-            msbuild Project1.dproj /t:Build ^
-              /p:Config=%CONFIG% /p:Platform=%PLATFORM% ^
-              /p:DCC_UnitSearchPath="%APP_SRC%;%WEBCHARTS_DIR%;%ACBR_PATH%" ^
-              /p:DCC_IncludePath="%APP_SRC%;%WEBCHARTS_DIR%;%ACBR_PATH%" ^
-              /p:DCC_OutputDir="Win32\\%CONFIG%"
+            echo "Tentativa ${i}/${maxTries} - UnitSearchPath TESTS: ${unitSearch}"
 
-            if errorlevel 1 exit /b 1
-          '''
+            def log = bat(returnStdout: true, script: """
+              @echo off
+              setlocal
+              call "${env.DELPHI_HOME}\\bin\\rsvars.bat" >nul
+
+              cd /d "%WORKSPACE%\\CalcTeste"
+
+              msbuild Project1.dproj /t:Build ^
+                /p:Config=Release /p:Platform=Win32 ^
+                /p:DCC_UnitSearchPath="${unitSearch}" ^
+                /p:DCC_IncludePath="${unitSearch}" ^
+                /p:DCC_OutputDir="Win32\\Release" ^
+                /nologo
+
+              echo __EXITCODE__=!ERRORLEVEL!
+            """).trim()
+
+            def exitLine = log.readLines().reverse().find { it.startsWith('__EXITCODE__=') }
+            def exitCode = (exitLine?.split('=')?.last() ?: '1') as Integer
+
+            if (exitCode == 0) {
+              echo "Build TESTS OK"
+              break
+            }
+
+            def missing = null
+            for (def line : log.readLines()) {
+              def m = (line =~ /error\s+F2613:\s+Unit\s+'([^']+)'\s+not\s+found/i)
+              if (m.find()) { missing = m.group(1); break }
+            }
+
+            if (!missing) {
+              error("Falhou, mas nao consegui identificar Unit faltando no log.\n\nLOG:\n${log}")
+            }
+
+            echo "Unit faltando detectada (TESTS): ${missing}"
+
+            def foundDir = null
+            for (def r : roots) {
+              def out = bat(returnStdout: true, script: """
+                @echo off
+                for /f "delims=" %%F in ('dir /b /s "${r}\\${missing}.pas" 2^>nul') do (
+                  echo FOUND=%%~dpF
+                  exit /b 0
+                )
+                echo FOUND=
+              """).trim()
+
+              def f = out.readLines().find { it.startsWith('FOUND=') }?.substring('FOUND='.length())?.trim()
+              if (f) { foundDir = f.endsWith("\\") ? f[0..-2] : f; break }
+            }
+
+            if (!foundDir) {
+              error("Nao achei ${missing}.pas nas roots (TESTS).\nRoots:\n- " + roots.join('\n- ') + "\n\nLOG:\n${log}")
+            }
+
+            echo "Achei ${missing}.pas em (TESTS): ${foundDir}"
+            extraPaths.add(foundDir)
+
+            if (i == maxTries) {
+              error("Estourou limite de tentativas (TESTS). Ultimo log:\n${log}")
+            }
+          }
         }
       }
     }
