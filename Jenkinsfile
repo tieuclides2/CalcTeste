@@ -72,6 +72,17 @@ pipeline {
           def bceditor  = "${env.COMP_BASE}\\BCEditor"
           def redsis    = "${env.COMP_BASE}\\RedsisComponents"
 
+          // Redsis components (auto-detect)
+          def redsisCandidates = [
+            "${redsis}\\Source",
+            "${redsis}\\Sources",
+            "${redsis}\\Fontes",
+            "${redsis}\\Src",
+            redsis
+          ]
+          def redsisPaths = redsisCandidates.findAll { p -> fileExists(p) }
+          echo "Redsis dirs detectados: ${redsisPaths}"
+          
           // ACBr sources
           def acbrPath = [
             "${acbr}\\Fontes\\ACBrComum",
@@ -112,7 +123,7 @@ pipeline {
           // UNIT_PATH final (prioriza fontes/dcus antes)
           env.UNIT_PATH = ([
             webcharts
-          ] + bcPaths + [
+          ] + bcPaths + redsisPaths + [
             acbrPath
           ] + frDcus + [
             frSources
@@ -121,6 +132,10 @@ pipeline {
           echo "UNIT_PATH: ${env.UNIT_PATH}"
         }
       }
+      bat """@echo off
+      echo === Procurando uFDCMemTable.pas em %COMP_BASE% ===
+      dir /s /b "%COMP_BASE%\\uFDCMemTable.pas"
+      """
     }
 
     stage('Build APP (CalcProject)') {
@@ -217,4 +232,5 @@ pipeline {
     }
   }
 }
+
 
