@@ -64,7 +64,7 @@ pipeline {
       }
     }
 
-    stage('Resolver roots (vendors + FastReport)') {
+    stage('Resolver roots (vendors + FastReport + BCEditor)') {
       steps {
         script {
           def webcharts = "${env.COMP_BASE}\\TBGWebCharts"
@@ -72,6 +72,7 @@ pipeline {
           def bceditor  = "${env.COMP_BASE}\\BCEditor"
           def redsis    = "${env.COMP_BASE}\\RedsisComponents"
 
+          // ACBr sources
           def acbrPath = [
             "${acbr}\\Fontes\\ACBrComum",
             "${acbr}\\Fontes\\ACBrDiversos",
@@ -82,21 +83,36 @@ pipeline {
             "${acbr}\\Fontes\\Terceiros"
           ].join(';')
 
+          // BCEditor sources (auto-detect)
+          def bcCandidates = [
+            "${bceditor}\\Source",
+            "${bceditor}\\Sources",
+            "${bceditor}\\Source\\Highlighter",
+            "${bceditor}\\Sources\\Highlighter",
+            "${bceditor}\\Source\\BCEditor",
+            "${bceditor}\\Sources\\BCEditor"
+          ]
+          def bcPaths = bcCandidates.findAll { p -> fileExists(p) }
+          echo "BCEditor dirs detectados: ${bcPaths}"
+
+          // FastReport base
           def frBase    = "${env.COMP_BASE}\\Fast Reports\\VCL\\2025.2.2"
           def frSources = "${frBase}\\Sources"
 
+          // DCUs do FastReport (Win32)
           def frDcuCandidates = [
             "${frBase}\\LibRS29\\VCL\\Win32",
             "${frBase}\\LibRS29\\VCL\\Win32x",
             "${frBase}\\Sources\\LibRS29\\VCL\\Win32",
             "${frBase}\\Sources\\LibRS29\\VCL\\Win32x"
           ]
-
           def frDcus = frDcuCandidates.findAll { p -> fileExists(p) }
           echo "FastReport DCU dirs detectados: ${frDcus}"
 
+          // UNIT_PATH final (prioriza fontes/dcus antes)
           env.UNIT_PATH = ([
-            webcharts,
+            webcharts
+          ] + bcPaths + [
             acbrPath
           ] + frDcus + [
             frSources
@@ -132,42 +148,41 @@ pipeline {
     }
 
     stage('Build TESTS (CalcTeste)') {
-  steps {
-    dir('CalcTeste') {
-      bat """@echo off
-      call "%RSVARS%"
-      echo === MSBUILD Project1.dproj (TESTS) CFG=%CFG% PLAT=%PLAT% ===
+      steps {
+        dir('CalcTeste') {
+          bat """@echo off
+          call "%RSVARS%"
+          echo === MSBUILD Project1.dproj (TESTS) CFG=%CFG% PLAT=%PLAT% ===
 
-      if not exist "Project1.dproj" (
-        echo ERRO: Project1.dproj nao encontrado em %CD%
-        dir
-        exit /b 2
-      )
+          if not exist "Project1.dproj" (
+            echo ERRO: Project1.dproj nao encontrado em %CD%
+            dir
+            exit /b 2
+          )
 
-      set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcTeste\\%PLAT%\\%CFG%"
-      if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
+          set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcTeste\\%PLAT%\\%CFG%"
+          if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
 
-      rem inclui o codigo do app no search path dos testes
-      set "APP_SRC=%WORKSPACE%\\CalcProject"
-      set "TEST_UNIT_PATH=%APP_SRC%;${env.UNIT_PATH}"
+          rem inclui o codigo do app no search path dos testes
+          set "APP_SRC=%WORKSPACE%\\CalcProject"
+          set "TEST_UNIT_PATH=%APP_SRC%;${env.UNIT_PATH}"
 
-      echo APP_SRC=%APP_SRC%
-      echo TEST_UNIT_PATH=%TEST_UNIT_PATH%
+          echo APP_SRC=%APP_SRC%
+          echo TEST_UNIT_PATH=%TEST_UNIT_PATH%
 
-      msbuild "Project1.dproj" /t:Build ^
-        /p:Config=%CFG% /p:Platform=%PLAT% ^
-        /p:DCC_UnitSearchPath="%TEST_UNIT_PATH%" ^
-        /p:DCC_IncludePath="%TEST_UNIT_PATH%" ^
-        /p:DCC_DcuOutput="%DCU_OUT%" ^
-        /p:DCC_OutputDir="Win32\\Release" ^
-        /fl /flp:logfile=msbuild_tests.log;verbosity=minimal
+          msbuild "Project1.dproj" /t:Build ^
+            /p:Config=%CFG% /p:Platform=%PLAT% ^
+            /p:DCC_UnitSearchPath="%TEST_UNIT_PATH%" ^
+            /p:DCC_IncludePath="%TEST_UNIT_PATH%" ^
+            /p:DCC_DcuOutput="%DCU_OUT%" ^
+            /p:DCC_OutputDir="Win32\\Release" ^
+            /fl /flp:logfile=msbuild_tests.log;verbosity=minimal
 
-      exit /b %ERRORLEVEL%
-      """
+          exit /b %ERRORLEVEL%
+          """
+        }
+      }
     }
-  }
-}
-
 
     stage('Run unit tests (DUnitX)') {
       steps {
@@ -181,7 +196,6 @@ pipeline {
             exit /b 3
           )
 
-          rem DUnitX console runner costuma aceitar parametros; se nao aceitar, ele roda e retorna errorlevel.
           "Win32\\Release\\Project1.exe"
           set ERR=%ERRORLEVEL%
           echo Test runner exit code: %ERR%
@@ -199,4 +213,3 @@ pipeline {
     }
   }
 }
-
