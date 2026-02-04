@@ -65,17 +65,17 @@ pipeline {
           def bceditor  = "${env.COMP_BASE}\\BCEditor"
           def redsis    = "${env.COMP_BASE}\\RedsisComponents"
 
-          // Redsis (candidatos base)
+          // Redsis (bases)
           def redsisCandidates = [
             "${redsis}\\Sources",
             "${redsis}\\Source",
             "${redsis}\\RDComponents\\Sources",
             redsis
           ]
-          def redsisPathsBase = redsisCandidates.findAll { p -> fileExists(p) }
-          echo "Redsis dirs base detectados: ${redsisPathsBase}"
+          def redsisBase = redsisCandidates.findAll { p -> fileExists(p) }
+          echo "Redsis dirs base detectados: ${redsisBase}"
 
-          // ACBr sources
+          // ACBr
           def acbrPath = [
             "${acbr}\\Fontes\\ACBrComum",
             "${acbr}\\Fontes\\ACBrDiversos",
@@ -86,7 +86,7 @@ pipeline {
             "${acbr}\\Fontes\\Terceiros"
           ].join(';')
 
-          // BCEditor sources
+          // BCEditor
           def bcCandidates = [
             "${bceditor}\\Source",
             "${bceditor}\\Sources",
@@ -110,34 +110,50 @@ pipeline {
           def frDcus = frDcuCandidates.findAll { p -> fileExists(p) }
           echo "FastReport DCU dirs detectados: ${frDcus}"
 
-          // ===== Diagnóstico + auto-add: uFDCMemTable =====
-          def memtableDirs = []
+          // ===== Auto-detect de units específicas (sem recursão no search path) =====
+          // A ideia: encontrar o .pas e adicionar o diretório pai no UNIT_PATH.
 
-          // caminhos conhecidos onde ele apareceu no seu log
-          def knownMemDirs = [
-            "${redsis}\\Sources\\DataComponents\\Fdc",
-            "${redsis}\\RDComponents\\Sources\\DataComponents\\Fdc"
-          ]
-          memtableDirs.addAll(knownMemDirs.findAll { p -> fileExists(p) })
+          def extraUnitDirs = []
 
-          echo "uFDCMemTable dirs detectados: ${memtableDirs}"
+          def findUnitDirs = { String unitPasName ->
+            // usa DIR /S /B e pega o diretório pai de cada ocorrência
+            def out = bat(
+              script: """@echo off
+              dir /s /b "${redsis}\\${unitPasName}" 2>nul
+              """,
+              returnStdout: true
+            ).trim()
+
+            if (!out) {
+              echo "Nao encontrado: ${unitPasName}"
+              return []
+            }
+
+            def paths = out.split("\\r?\\n").collect { it.trim() }.findAll { it }
+            echo "Encontrado ${unitPasName}: ${paths}"
+
+            // extrai diretórios (remove \\arquivo.pas)
+            def dirs = paths.collect { p -> p.replaceAll('\\\\[^\\\\]+$', '') }.unique()
+            return dirs
+          }
+
+          // uFDCMemTable e dependência atual uRDConnection
+          extraUnitDirs.addAll(findUnitDirs('uFDCMemTable.pas'))
+          extraUnitDirs.addAll(findUnitDirs('uRDConnection.pas'))
+
+          extraUnitDirs = extraUnitDirs.unique()
+          echo "Dirs extras (units Redsis) detectados: ${extraUnitDirs}"
 
           // UNIT_PATH final
           env.UNIT_PATH = ([
             webcharts
-          ] + bcPaths + redsisPathsBase + memtableDirs + [
+          ] + bcPaths + redsisBase + extraUnitDirs + [
             acbrPath
           ] + frDcus + [
             frSources
           ]).join(';')
 
           echo "UNIT_PATH: ${env.UNIT_PATH}"
-
-          // imprime onde achou o arquivo (debug)
-          bat """@echo off
-          echo === Procurando uFDCMemTable.pas em ${env.COMP_BASE} ===
-          dir /s /b "${env.COMP_BASE}\\uFDCMemTable.pas"
-          """
         }
       }
     }
