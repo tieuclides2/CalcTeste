@@ -2,16 +2,9 @@ pipeline {
   agent { label 'delphi-qa' }
 
   environment {
-    // Delphi
     RSVARS = 'C:\\DelphiCompiler\\23.0\\bin\\rsvars.bat'
-
-    // Vendors base
     COMP_BASE = 'C:\\DelphiCompiler\\Componentes'
-
-    // Cache global
     JENKINS_CACHE = 'C:\\Jenkins\\delphi-qa\\JenkinsCache'
-
-    // defaults
     CFG  = 'Release'
     PLAT = 'Win32'
   }
@@ -72,16 +65,15 @@ pipeline {
           def bceditor  = "${env.COMP_BASE}\\BCEditor"
           def redsis    = "${env.COMP_BASE}\\RedsisComponents"
 
-          // Redsis components (auto-detect)
+          // Redsis (candidatos base)
           def redsisCandidates = [
-            "${redsis}\\Source",
             "${redsis}\\Sources",
-            "${redsis}\\Fontes",
-            "${redsis}\\Src",
+            "${redsis}\\Source",
+            "${redsis}\\RDComponents\\Sources",
             redsis
           ]
-          def redsisPaths = redsisCandidates.findAll { p -> fileExists(p) }
-          echo "Redsis dirs detectados: ${redsisPaths}"
+          def redsisPathsBase = redsisCandidates.findAll { p -> fileExists(p) }
+          echo "Redsis dirs base detectados: ${redsisPathsBase}"
 
           // ACBr sources
           def acbrPath = [
@@ -94,7 +86,7 @@ pipeline {
             "${acbr}\\Fontes\\Terceiros"
           ].join(';')
 
-          // BCEditor sources (auto-detect)
+          // BCEditor sources
           def bcCandidates = [
             "${bceditor}\\Source",
             "${bceditor}\\Sources",
@@ -106,11 +98,9 @@ pipeline {
           def bcPaths = bcCandidates.findAll { p -> fileExists(p) }
           echo "BCEditor dirs detectados: ${bcPaths}"
 
-          // FastReport base
+          // FastReport
           def frBase    = "${env.COMP_BASE}\\Fast Reports\\VCL\\2025.2.2"
           def frSources = "${frBase}\\Sources"
-
-          // DCUs do FastReport (Win32)
           def frDcuCandidates = [
             "${frBase}\\LibRS29\\VCL\\Win32",
             "${frBase}\\LibRS29\\VCL\\Win32x",
@@ -120,10 +110,22 @@ pipeline {
           def frDcus = frDcuCandidates.findAll { p -> fileExists(p) }
           echo "FastReport DCU dirs detectados: ${frDcus}"
 
+          // ===== Diagnóstico + auto-add: uFDCMemTable =====
+          def memtableDirs = []
+
+          // caminhos conhecidos onde ele apareceu no seu log
+          def knownMemDirs = [
+            "${redsis}\\Sources\\DataComponents\\Fdc",
+            "${redsis}\\RDComponents\\Sources\\DataComponents\\Fdc"
+          ]
+          memtableDirs.addAll(knownMemDirs.findAll { p -> fileExists(p) })
+
+          echo "uFDCMemTable dirs detectados: ${memtableDirs}"
+
           // UNIT_PATH final
           env.UNIT_PATH = ([
             webcharts
-          ] + bcPaths + redsisPaths + [
+          ] + bcPaths + redsisPathsBase + memtableDirs + [
             acbrPath
           ] + frDcus + [
             frSources
@@ -131,7 +133,7 @@ pipeline {
 
           echo "UNIT_PATH: ${env.UNIT_PATH}"
 
-          // Diagnóstico: localizar a unit do TRDMemTable
+          // imprime onde achou o arquivo (debug)
           bat """@echo off
           echo === Procurando uFDCMemTable.pas em ${env.COMP_BASE} ===
           dir /s /b "${env.COMP_BASE}\\uFDCMemTable.pas"
@@ -180,7 +182,6 @@ pipeline {
           set "DCU_OUT=%JENKINS_CACHE%\\DCU\\CalcTeste\\%PLAT%\\%CFG%"
           if not exist "%DCU_OUT%" mkdir "%DCU_OUT%"
 
-          rem inclui o codigo do app no search path dos testes
           set "APP_SRC=%WORKSPACE%\\CalcProject"
           set "TEST_UNIT_PATH=%APP_SRC%;${env.UNIT_PATH}"
 
