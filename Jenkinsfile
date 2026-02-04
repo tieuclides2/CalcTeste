@@ -172,11 +172,15 @@ pipeline {
 
           msbuild "Project1.dproj" /t:Build ^
             /p:Config=%CFG% /p:Platform=%PLAT% ^
+            /p:FrameworkType=VCL ^
+            /p:DCC_Namespace="Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde;System;Xml;Data;Datasnap;Web;Soap;Vcl;Vcl.Imaging;Vcl.Touch;Vcl.Samples;Vcl.Shell" ^
+            /p:DCC_UnitScopeNames="Winapi;System;Data;Datasnap;Web;Soap;Xml;Bde;Vcl" ^
             /p:DCC_UnitSearchPath="%TEST_UNIT_PATH%" ^
             /p:DCC_IncludePath="%TEST_UNIT_PATH%" ^
             /p:DCC_DcuOutput="%DCU_OUT%" ^
             /p:DCC_OutputDir="Win32\\Release" ^
             /fl /flp:logfile=msbuild_tests.log;verbosity=minimal
+
 
           exit /b %ERRORLEVEL%
           """
@@ -213,3 +217,4 @@ pipeline {
     }
   }
 }
+
