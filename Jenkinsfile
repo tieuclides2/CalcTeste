@@ -64,7 +64,7 @@ pipeline {
       }
     }
 
-    stage('Resolver roots (vendors + FastReport + BCEditor)') {
+    stage('Resolver roots (vendors + FastReport + BCEditor + Redsis)') {
       steps {
         script {
           def webcharts = "${env.COMP_BASE}\\TBGWebCharts"
@@ -82,7 +82,7 @@ pipeline {
           ]
           def redsisPaths = redsisCandidates.findAll { p -> fileExists(p) }
           echo "Redsis dirs detectados: ${redsisPaths}"
-          
+
           // ACBr sources
           def acbrPath = [
             "${acbr}\\Fontes\\ACBrComum",
@@ -120,7 +120,7 @@ pipeline {
           def frDcus = frDcuCandidates.findAll { p -> fileExists(p) }
           echo "FastReport DCU dirs detectados: ${frDcus}"
 
-          // UNIT_PATH final (prioriza fontes/dcus antes)
+          // UNIT_PATH final
           env.UNIT_PATH = ([
             webcharts
           ] + bcPaths + redsisPaths + [
@@ -130,12 +130,14 @@ pipeline {
           ]).join(';')
 
           echo "UNIT_PATH: ${env.UNIT_PATH}"
+
+          // Diagnóstico: localizar a unit do TRDMemTable
+          bat """@echo off
+          echo === Procurando uFDCMemTable.pas em ${env.COMP_BASE} ===
+          dir /s /b "${env.COMP_BASE}\\uFDCMemTable.pas"
+          """
         }
       }
-      bat """@echo off
-      echo === Procurando uFDCMemTable.pas em %COMP_BASE% ===
-      dir /s /b "%COMP_BASE%\\uFDCMemTable.pas"
-      """
     }
 
     stage('Build APP (CalcProject)') {
@@ -196,7 +198,6 @@ pipeline {
             /p:DCC_OutputDir="Win32\\Release" ^
             /fl /flp:logfile=msbuild_tests.log;verbosity=minimal
 
-
           exit /b %ERRORLEVEL%
           """
         }
@@ -232,6 +233,3 @@ pipeline {
     }
   }
 }
-
-
-
